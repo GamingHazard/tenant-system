@@ -21,11 +21,18 @@ export interface PropertySpecification {
   value: string;
 }
 
+export interface UnitImage {
+  name: string;
+  url: string;
+  public_id: string;
+}
+
 export interface UnitDetails {
   unitNumber: string;
   rent: number;
   unitType?: string;
   specifications?: PropertySpecification[];
+  images?: UnitImage[];
 }
 
 export interface PropertyRecord {
@@ -140,6 +147,13 @@ export function normalizePropertyRecord(property: any): PropertyRecord {
         specifications: Array.isArray(unit.specifications)
           ? unit.specifications
           : [],
+        images: Array.isArray(unit.images)
+          ? unit.images.map((image: any) => ({
+              name: image?.name ?? "",
+              url: image?.url ?? image?.secure_url ?? "",
+              public_id: image?.public_id ?? image?.publicId ?? "",
+            }))
+          : [],
       } as any;
     });
   }
@@ -168,6 +182,8 @@ export const PROPERTY_LIST_FIELDS = [
   "category",
   "units_available",
   "price_per_unit",
+  "units",
+  "detailedUnits",
   "propertyType",
   "type",
   "tenants",
@@ -175,6 +191,7 @@ export const PROPERTY_LIST_FIELDS = [
   "monthlyRevenue",
   "images",
   "description",
+  "serviceFee",
 ];
 
 export async function listPropertiesApi(
@@ -275,6 +292,7 @@ export function getAvailablePropertiesWithUnits() {
                 rent: property.price_per_unit ?? 0,
                 unitType: "",
                 specifications: [],
+                images: [],
               }
             : unit,
         )

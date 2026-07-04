@@ -638,6 +638,144 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
               </div>
             </div>
 
+            {/* Profile Details */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <User className="w-5 h-5" />
+                Profile Details
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Preferred Name
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.preferredName || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Middle Name
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.middleName || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Gender</p>
+                  <p className="text-foreground capitalize">
+                    {tenant.gender || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Marital Status
+                  </p>
+                  <p className="text-foreground capitalize">
+                    {tenant.maritalStatus || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Nationality
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.nationality || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Place of Origin
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.placeOfOrigin || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Has Family
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.hasFamily ? "Yes" : "No"}
+                  </p>
+                </div>
+                <div className="md:col-span-2">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Household Members
+                  </p>
+                  <p className="text-foreground whitespace-pre-wrap">
+                    {Array.isArray(tenant.householdMembers)
+                      ? tenant.householdMembers.join(", ")
+                      : tenant.householdMembers || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Cohabitant Name
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.cohabitant?.name || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Cohabitant Relationship
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.cohabitant?.relationship || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Occupation
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.occupation || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Employer Name
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.employerName || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Position</p>
+                  <p className="text-foreground">
+                    {tenant.position || "Not provided"}
+                  </p>
+                </div>
+                <div className="md:col-span-2">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Next of Kin
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.nextOfKin?.name || "Not provided"}
+                    {tenant.nextOfKin?.relationship &&
+                      ` — ${tenant.nextOfKin.relationship}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Next of Kin Phone
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.nextOfKin?.phone || "Not provided"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Next of Kin Email
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.nextOfKin?.email || "Not provided"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Property & Lease Information */}
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
@@ -671,11 +809,17 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                     return (
                       <div>
                         <div className="text-sm text-muted-foreground">
-                          {formatCurrency(rent, activeCurrency)} rent +{" "}
-                          {formatCurrency(serviceFee, activeCurrency)} service
+                          {formatCurrency(rent, activeCurrency, undefined)} rent
+                          +{" "}
+                          {formatCurrency(
+                            serviceFee,
+                            activeCurrency,
+                            undefined,
+                          )}{" "}
+                          service
                         </div>
                         <div className="text-lg font-semibold text-foreground">
-                          {formatCurrency(total, activeCurrency)}
+                          {formatCurrency(total, activeCurrency, undefined)}
                         </div>
                       </div>
                     );
@@ -713,6 +857,14 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                   </p>
                   <p className="text-foreground">
                     {tenant.leaseTerms || "Not specified"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Security Deposit
+                  </p>
+                  <p className="text-foreground">
+                    {tenant.securityDeposit || "Not provided"}
                   </p>
                 </div>
                 <div>
@@ -898,6 +1050,49 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
               </div>
             )}
 
+            {(tenant.policyGiven?.title ||
+              tenant.policyGiven?.body ||
+              tenant.policyExceptions) && (
+              <div className="space-y-4 border border-border rounded-lg p-4 bg-secondary/20">
+                <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
+                  Tenant Policy
+                </h3>
+                <div className="grid grid-cols-1 gap-6">
+                  {tenant.policyGiven?.title && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-1">
+                        Assigned Policy Title
+                      </p>
+                      <p className="text-foreground">
+                        {tenant.policyGiven.title}
+                      </p>
+                    </div>
+                  )}
+                  {tenant.policyGiven?.body && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-1">
+                        Assigned Policy
+                      </p>
+                      <p className="text-foreground whitespace-pre-wrap">
+                        {tenant.policyGiven.body}
+                      </p>
+                    </div>
+                  )}
+                  {tenant.policyExceptions && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-1">
+                        Policy Exceptions
+                      </p>
+                      <p className="text-foreground whitespace-pre-wrap">
+                        {tenant.policyExceptions}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Notes */}
             {tenant.notes && (
               <div className="space-y-4">
@@ -945,11 +1140,17 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                     return (
                       <div>
                         <div className="text-sm text-muted-foreground">
-                          {formatCurrency(rent, activeCurrency)} rent +{" "}
-                          {formatCurrency(serviceFee, activeCurrency)} service
+                          {formatCurrency(rent, activeCurrency, undefined)} rent
+                          +{" "}
+                          {formatCurrency(
+                            serviceFee,
+                            activeCurrency,
+                            undefined,
+                          )}{" "}
+                          service
                         </div>
                         <div className="text-2xl font-bold text-foreground">
-                          {formatCurrency(total, activeCurrency)}
+                          {formatCurrency(total, activeCurrency, undefined)}
                         </div>
                       </div>
                     );
@@ -967,11 +1168,15 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                       <div>
                         <div className="text-sm text-muted-foreground">
                           Includes service fee ·{" "}
-                          {formatCurrency(rent + serviceFee, activeCurrency)} /
-                          month
+                          {formatCurrency(
+                            rent + serviceFee,
+                            activeCurrency,
+                            undefined,
+                          )}{" "}
+                          / month
                         </div>
                         <div className="text-2xl font-bold text-foreground">
-                          {formatCurrency(annual, activeCurrency)}
+                          {formatCurrency(annual, activeCurrency, undefined)}
                         </div>
                       </div>
                     );

@@ -545,18 +545,13 @@ export default function TenantsPage() {
                   <td className="px-6 py-4 font-semibold text-foreground">
                     {(() => {
                       const rent = Number(tenant.rentAmount ?? 0);
-                      const serviceFee = Number(
-                        tenant.property?.serviceFee ?? 0,
-                      );
-                      const total = rent + serviceFee;
                       return (
                         <div className="space-y-1">
                           <div className="text-sm text-muted-foreground">
-                            {formatCurrency(rent, activeCurrency)} rent +{" "}
-                            {formatCurrency(serviceFee, activeCurrency)} service
+                            Tenant rent
                           </div>
                           <div className="font-semibold">
-                            {formatCurrency(total, activeCurrency)}
+                            {formatCurrency(rent, activeCurrency)}
                           </div>
                         </div>
                       );

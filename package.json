@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "api-smoke-test": "node ./scripts/api-smoke-test.mjs",
+    "audit-smoke-test": "node ./scripts/audit-smoke-test.mjs",
     "security-user-smoke-test": "node ./scripts/security-user-smoke-test.mjs"
   },
   "dependencies": {

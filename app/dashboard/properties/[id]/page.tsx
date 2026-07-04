@@ -24,7 +24,12 @@ import {
   TenantRecord,
 } from "@/lib/services/tenants";
 import { useAppData } from "@/lib/data-context";
-import { updateProperty } from "@/lib/services/properties";
+import {
+  deleteProperty,
+  getPropertyById,
+  normalizePropertyRecord,
+  updateProperty,
+} from "@/lib/services/properties";
 import {
   Dialog,
   DialogContent,
@@ -61,7 +66,6 @@ import {
   getCategoryForType,
   createSpecificationValues,
 } from "@/lib/constants/property-types";
-import { deleteProperty } from "@/lib/services/properties";
 import { apiRequest } from "@/lib/query-client";
 import { url } from "inspector";
 import { useAuth } from "@/lib/auth-context";
@@ -87,21 +91,40 @@ export default function PropertyDetailPage({
   const activeCurrency = useActiveCurrency();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const [property, setProperty] = useState<any>(() =>
-    properties.find((item) => item.id === id),
-  );
+  const [property, setProperty] = useState<any | null>(null);
   const { token } = useAuth();
 
-  const refreshProperty = () => {
-    const updated = properties.find((item) => item.id === id);
-    setProperty(updated);
-    setImages(updated?.images || []);
-    return updated;
+  const refreshProperty = async () => {
+    const cachedProperty = properties.find(
+      (item) => item.id === id || item._id === id,
+    );
+
+    if (cachedProperty) {
+      setProperty(cachedProperty);
+      setImages(cachedProperty?.images || []);
+    }
+
+    if (!id) {
+      return cachedProperty ?? null;
+    }
+
+    try {
+      const latestProperty = await getPropertyById(id, token || undefined);
+      const nextProperty = normalizePropertyRecord(
+        latestProperty ?? cachedProperty ?? {},
+      );
+      setProperty(nextProperty);
+      setImages(nextProperty?.images || []);
+      return nextProperty;
+    } catch (error) {
+      console.warn("Failed to refresh property details:", error);
+      return cachedProperty ?? null;
+    }
   };
 
   useEffect(() => {
-    refreshProperty();
-  }, [id, properties]);
+    void refreshProperty();
+  }, [id, properties, token]);
 
   const propertyTenants = useMemo(
     () =>
@@ -149,9 +172,11 @@ export default function PropertyDetailPage({
   );
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const [images, setImages] = useState<any[]>(property?.images || []);
+  const [images, setImages] = useState<any[]>([]);
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isUnitImageUploadOpen, setIsUnitImageUploadOpen] = useState(false);
+  const [isUnitGalleryOpen, setIsUnitGalleryOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -169,73 +194,203 @@ export default function PropertyDetailPage({
   const [selectedTenant, setSelectedTenant] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdatingProperty, setIsUpdatingProperty] = useState(false);
+  const [unitUploadTarget, setUnitUploadTarget] = useState<any | null>(null);
+  const [unitGalleryTarget, setUnitGalleryTarget] = useState<any | null>(null);
+  const [unitUploadFile, setUnitUploadFile] = useState<File | null>(null);
+  const [unitUploadPreview, setUnitUploadPreview] = useState<string | null>(
+    null,
+  );
+  const [unitUploadName, setUnitUploadName] = useState("");
+  const [isUnitUploading, setIsUnitUploading] = useState(false);
+  const [unitImageError, setUnitImageError] = useState("");
+  const [unitImageDeletingId, setUnitImageDeletingId] = useState<string | null>(
+    null,
+  );
+  const unitFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Income Calculations
-  const tenantMonthly = propertyTenants.reduce((sum, tenant) => {
-    const tenantRent = Number(tenant.rentAmount || 0);
-    const baseRent = tenantRent > 0 ? tenantRent : 0;
-    const serviceFee = Number(property?.serviceFee ?? 0);
-    if (baseRent > 0) return sum + baseRent + serviceFee;
-
-    const matchingUnit = unitRecords.find(
-      (unit: any) => unit.unitNumber === tenant?.unitNumber,
-    );
-
-    return sum + (matchingUnit?.rent || 0) + Number(property?.serviceFee ?? 0);
-  }, 0);
-
-  const unitRecords = (() => {
-    const rawUnits =
-      Array.isArray(property?.detailedUnits) &&
-      property.detailedUnits.length > 0
+  const unitRecords = useMemo(() => {
+    const rawUnits = Array.isArray(property?.units)
+      ? property.units
+      : Array.isArray(property?.detailedUnits)
         ? property.detailedUnits
-        : Array.isArray(property?.units)
-          ? property.units
-          : [];
+        : [];
 
-    return Array.isArray(rawUnits)
-      ? rawUnits.map((unit: any) =>
-          typeof unit === "string"
-            ? {
-                unitNumber: unit,
-                rent: Number(property?.price_per_unit ?? 0),
-              }
-            : {
-                unitNumber: unit.unitNumber || unit.unit || "",
-                rent: Number(
-                  unit.rent ?? unit.price ?? property?.price_per_unit ?? 0,
-                ),
-              },
-        )
-      : [];
-  })();
+    if (!Array.isArray(rawUnits)) {
+      return [];
+    }
+
+    return rawUnits
+      .filter((unit: any) => unit && typeof unit === "object")
+      .map((unit: any) => ({
+        unitNumber: unit.unitNumber || unit.unit || "",
+        rent: Number(
+          unit.rent ?? unit.price ?? unit.monthlyRent ?? unit.rentAmount ?? 0,
+        ),
+        images: Array.isArray(unit.images) ? unit.images : [],
+      }));
+  }, [property?.units, property?.detailedUnits]);
 
   const totalUnits = unitRecords.length || property?.units_available || 0;
   const occupiedUnits = propertyTenants.length;
-  const availableUnits = Math.max(0, totalUnits - occupiedUnits);
 
   const totalUnitRent = unitRecords.reduce(
     (sum: number, unit: any) => sum + (Number(unit.rent) || 0),
     0,
   );
 
-  const totalUnitRentFallback =
-    property?.price_per_unit && totalUnits > 0
-      ? property.price_per_unit * totalUnits
-      : 0;
-
-  let totalMonthlyIncome = tenantMonthly;
-  if (unitRecords.length > 0) {
-    totalMonthlyIncome = totalUnitRent;
-  } else if (property?.price_per_unit && totalUnits > 0) {
-    totalMonthlyIncome = property.price_per_unit * totalUnits;
-  }
-
+  const totalMonthlyIncome = Math.max(0, totalUnitRent);
   const totalAnnualIncome = totalMonthlyIncome * 12;
+
+  const occupiedUnitNumbers = new Set(
+    propertyTenants
+      .map((tenant: any) => String(tenant?.unitNumber ?? "").trim())
+      .filter(Boolean),
+  );
+
+  const vacantUnitRecords = unitRecords.filter((unit: any) => {
+    const unitNumber = String(unit?.unitNumber ?? "").trim();
+    return unitNumber ? !occupiedUnitNumbers.has(unitNumber) : true;
+  });
+
+  const vacantUnitRent = vacantUnitRecords.reduce(
+    (sum: number, unit: any) => sum + (Number(unit.rent) || 0),
+    0,
+  );
+
+  const availableUnits = vacantUnitRecords.length;
+  const monthlyRevenueLoss = Math.max(0, vacantUnitRent);
+  const annualRevenueLoss = monthlyRevenueLoss * 12;
+
+  const updateUnitImages = (unitNumber: string, nextImages: any[]) => {
+    const updatedUnits = (property?.detailedUnits || property?.units || []).map(
+      (unit: any) => {
+        const currentUnitNumber = unit.unitNumber || unit.unit || "";
+        if (currentUnitNumber !== unitNumber) return unit;
+        return { ...unit, images: nextImages };
+      },
+    );
+
+    setProperty((prev: any) => ({ ...prev, units: updatedUnits }));
+    setProperty((prev: any) => ({ ...prev, detailedUnits: updatedUnits }));
+  };
+
+  const openUnitUploadDialog = (unit: any) => {
+    setUnitUploadTarget(unit);
+    setUnitUploadName("");
+    setUnitUploadFile(null);
+    setUnitUploadPreview(null);
+    setUnitImageError("");
+    setIsUnitImageUploadOpen(true);
+  };
+
+  const openUnitGalleryDialog = (unit: any) => {
+    setUnitGalleryTarget(unit);
+    setUnitImageError("");
+    setIsUnitGalleryOpen(true);
+  };
+
+  const handleUnitImageUpload = async () => {
+    if (!unitUploadTarget || !unitUploadFile) {
+      setUnitImageError("Please select an image to upload.");
+      return;
+    }
+
+    const existingImages = Array.isArray(unitUploadTarget?.images)
+      ? unitUploadTarget.images
+      : [];
+    if (existingImages.length >= 5) {
+      setUnitImageError("Each unit can have a maximum of 5 images.");
+      return;
+    }
+
+    setIsUnitUploading(true);
+    setUnitImageError("");
+    try {
+      const res = await uploadToCloudinary(unitUploadFile);
+      if (!res?.secure_url || !res?.public_id) {
+        throw new Error("Cloudinary upload did not return a valid URL");
+      }
+
+      const nextImages = [
+        ...existingImages,
+        {
+          name:
+            unitUploadName.trim() ||
+            unitUploadTarget.unitNumber ||
+            "unit-image",
+          url: res.secure_url,
+          public_id: res.public_id,
+        },
+      ];
+
+      const response = await apiRequest(
+        "POST",
+        `/property/${property?.id}/unit/${encodeURIComponent(unitUploadTarget.unitNumber)}/images`,
+        {
+          images: nextImages,
+        },
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to save unit image");
+      }
+
+      const payload = await response.json();
+      const updatedUnit = payload?.unit || null;
+      if (updatedUnit) {
+        updateUnitImages(
+          updatedUnit.unitNumber || unitUploadTarget.unitNumber,
+          updatedUnit.images || nextImages,
+        );
+      }
+      refreshProperty();
+      setIsUnitImageUploadOpen(false);
+    } catch (error: any) {
+      console.error("Unit image upload failed", error);
+      setUnitImageError(
+        error?.message || "Failed to upload unit image. Please try again.",
+      );
+    } finally {
+      setIsUnitUploading(false);
+      setUnitUploadFile(null);
+      setUnitUploadPreview(null);
+      setUnitUploadName("");
+    }
+  };
+
+  const handleUnitImageDelete = async (unit: any, image: any) => {
+    if (!image?.public_id) {
+      return;
+    }
+
+    setUnitImageDeletingId(image.public_id);
+    try {
+      const response = await apiRequest(
+        "DELETE",
+        `/property/${property?.id}/unit/${encodeURIComponent(unit.unitNumber)}/images/${encodeURIComponent(image.public_id)}`,
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to delete unit image");
+      }
+
+      const nextImages = (Array.isArray(unit.images) ? unit.images : []).filter(
+        (item: any) => item.public_id !== image.public_id,
+      );
+      updateUnitImages(unit.unitNumber, nextImages);
+      refreshProperty();
+    } catch (error: any) {
+      console.error("Unit image delete failed", error);
+    } finally {
+      setUnitImageDeletingId(null);
+    }
+  };
   const averageIncomePerUnit =
-    occupiedUnits > 0 ? Math.round(totalMonthlyIncome / occupiedUnits) : 0;
-  const potentialMonthlyIncome =
-    unitRecords.length > 0 ? totalUnitRent : totalUnitRentFallback;
+    totalUnits > 0 ? Math.round(totalMonthlyIncome / totalUnits) : 0;
+  const potentialMonthlyIncome = totalMonthlyIncome;
   const occupancyPercentage =
     totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
   const incomeUtilization =
@@ -243,31 +398,9 @@ export default function PropertyDetailPage({
       ? Math.round((totalMonthlyIncome / potentialMonthlyIncome) * 100)
       : 0;
 
-  function formatCompactNumber(value: number | null | undefined) {
-    const n = Number(value) || 0;
-    const abs = Math.abs(n);
-    if (abs >= 1_000_000) {
-      const v = n / 1_000_000;
-      return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + "M";
-    }
-    if (abs >= 1_000) {
-      const v = n / 1_000;
-      return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + "K";
-    }
-    return String(n);
-  }
-
-  // Tenant-collected rent for this property (completed rent transactions)
-  const tenantCollected = transactions
-    .filter(
-      (t) => t?.reasonForPayment === "rentPayment" && t.status === "completed",
-    )
-    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
-
-  // revenue lost compared to potential monthly income
-  const revenueLost = Math.max(0, potentialMonthlyIncome - tenantCollected);
-  const avgRevenueLostPerUnit = property?.units_available
-    ? Math.round(revenueLost / property?.units_available)
+  const revenueLost = monthlyRevenueLoss;
+  const avgRevenueLostPerUnit = availableUnits
+    ? Math.round(revenueLost / availableUnits)
     : 0;
 
   if (!mounted || !property) {
@@ -895,54 +1028,182 @@ export default function PropertyDetailPage({
                   </div>
                 </div>
 
-                {/* Key Stats */}
-                <div className="grid grid-cols-5 gap-3">
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">
-                      Available Units
-                    </p>
-                    <p className="text-2xl font-bold text-foreground">
-                      {availableUnits}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">
-                      Tenants
-                    </p>
-                    <p className="text-2xl font-bold text-foreground">
-                      {propertyTenants.length}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">
-                      Occupancy
-                    </p>
-                    <p className="text-2xl font-bold text-foreground">
-                      {occupancyPercentage}%
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">
-                      Monthly Income
-                    </p>
-                    <p className="text-lg font-bold text-green-600 dark:text-green-400">
-                      {getCurrencySymbol(activeCurrency)}
-                      {formatCompactNumber(totalMonthlyIncome)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">
-                      Annual Income
-                    </p>
-                    <p className="text-lg font-bold text-green-600 dark:text-green-400">
-                      {getCurrencySymbol(activeCurrency)}{" "}
-                      {formatCompactNumber(totalAnnualIncome)}
-                    </p>
+                {/* Financial Summary */}
+                <div className="mt-6">
+                  <h3 className="text-lg font-semibold text-foreground mb-3">
+                    Financial Summary
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <Card className="border border-border p-4">
+                      <p className="text-sm text-muted-foreground mb-2">
+                        Monthly Income
+                      </p>
+                      <p className="text-lg font-bold text-green-600 dark:text-green-400">
+                        {formatCurrency(totalMonthlyIncome, activeCurrency)}
+                      </p>
+                    </Card>
+                    <Card className="border border-border p-4">
+                      <p className="text-sm text-muted-foreground mb-2">
+                        Annual Income
+                      </p>
+                      <p className="text-lg font-bold text-green-600 dark:text-green-400">
+                        {formatCurrency(totalAnnualIncome, activeCurrency)}
+                      </p>
+                    </Card>
+                    <Card className="border border-border p-4">
+                      <p className="text-sm text-muted-foreground mb-2">
+                        Occupied Units
+                      </p>
+                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                        {occupiedUnits}/{totalUnits}
+                      </p>
+                    </Card>
+                    <Card className="border border-border p-4">
+                      <p className="text-sm text-muted-foreground mb-2">
+                        Occupancy Rate
+                      </p>
+                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                        {occupancyPercentage}%
+                      </p>
+                    </Card>
                   </div>
                 </div>
               </div>
             </div>
           </Card>
+
+          <Dialog
+            open={isUnitImageUploadOpen}
+            onOpenChange={setIsUnitImageUploadOpen}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Upload unit image</DialogTitle>
+                <DialogDescription>
+                  Add up to 5 images for{" "}
+                  {unitUploadTarget?.unitNumber || "this unit"}.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Image name
+                  </label>
+                  <Input
+                    value={unitUploadName}
+                    onChange={(e) => setUnitUploadName(e.target.value)}
+                    placeholder="Kitchen, bathroom, etc."
+                  />
+                </div>
+                <div>
+                  <input
+                    ref={unitFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      setUnitUploadFile(file);
+                      if (file) {
+                        setUnitUploadPreview(URL.createObjectURL(file));
+                      } else {
+                        setUnitUploadPreview(null);
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => unitFileInputRef.current?.click()}
+                    className="flex h-32 w-full items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground"
+                  >
+                    {unitUploadPreview ? "Change image" : "Choose image"}
+                  </button>
+                  {unitUploadPreview && (
+                    <img
+                      src={unitUploadPreview}
+                      alt="Unit preview"
+                      className="mt-3 h-40 w-full rounded-md object-cover"
+                    />
+                  )}
+                </div>
+                {unitImageError ? (
+                  <p className="text-sm text-red-600">{unitImageError}</p>
+                ) : null}
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsUnitImageUploadOpen(false);
+                    setUnitUploadFile(null);
+                    setUnitUploadPreview(null);
+                    setUnitUploadName("");
+                    setUnitImageError("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={isUnitUploading}
+                  onClick={handleUnitImageUpload}
+                >
+                  {isUnitUploading ? "Uploading..." : "Upload image"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isUnitGalleryOpen} onOpenChange={setIsUnitGalleryOpen}>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>
+                  {unitGalleryTarget?.unitNumber || "Unit gallery"}
+                </DialogTitle>
+                <DialogDescription>
+                  Browse images for this unit. You can delete any image you no
+                  longer need.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 md:grid-cols-2">
+                {Array.isArray(unitGalleryTarget?.images) &&
+                unitGalleryTarget.images.length > 0 ? (
+                  unitGalleryTarget.images.map((image: any, index: number) => (
+                    <div
+                      key={`${image.public_id || index}`}
+                      className="rounded-md border border-border p-2"
+                    >
+                      <img
+                        src={image.url}
+                        alt={image.name || `Unit image ${index + 1}`}
+                        className="h-40 w-full rounded-md object-cover"
+                      />
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">
+                          {image.name || `Image ${index + 1}`}
+                        </p>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={unitImageDeletingId === image.public_id}
+                          onClick={() =>
+                            handleUnitImageDelete(unitGalleryTarget, image)
+                          }
+                        >
+                          {unitImageDeletingId === image.public_id
+                            ? "Deleting..."
+                            : "Delete"}
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No images yet for this unit.
+                  </p>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
 
           {/* Tabs */}
           <Card className="border border-border">
@@ -963,8 +1224,15 @@ export default function PropertyDetailPage({
                   value="units"
                   className="border-b-2 border-transparent data-[state=active]:border-primary rounded-none px-6 py-3 text-foreground data-[state=active]:bg-transparent"
                 >
+                  <Home className="w-4 h-4 mr-2" />
+                  Units
+                </TabsTrigger>
+                <TabsTrigger
+                  value="tenants"
+                  className="border-b-2 border-transparent data-[state=active]:border-primary rounded-none px-6 py-3 text-foreground data-[state=active]:bg-transparent"
+                >
                   <Users className="w-4 h-4 mr-2" />
-                  Units & Tenants
+                  Tenants
                 </TabsTrigger>
                 <TabsTrigger
                   value="financials"
@@ -1194,8 +1462,96 @@ export default function PropertyDetailPage({
                 </div>
               </TabsContent>
 
-              {/* Units & Tenants Tab */}
+              {/* Units Tab */}
               <TabsContent value="units" className="p-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-foreground">
+                      Unit Inventory ({unitRecords.length})
+                    </h3>
+                  </div>
+                  {unitRecords.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="px-4 py-3 text-left font-semibold text-foreground">
+                              Unit
+                            </th>
+                            <th className="px-4 py-3 text-left font-semibold text-foreground">
+                              Rent
+                            </th>
+                            <th className="px-4 py-3 text-left font-semibold text-foreground">
+                              Status
+                            </th>
+                            <th className="px-4 py-3 text-right font-semibold text-foreground">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {unitRecords.map((unit: any, index: number) => {
+                            const occupied = propertyTenants.some(
+                              (tenant) => tenant.unitNumber === unit.unitNumber,
+                            );
+                            return (
+                              <tr
+                                key={`${unit.unitNumber}-${index}`}
+                                className="border-b border-border hover:bg-secondary"
+                              >
+                                <td className="px-4 py-3 font-semibold text-foreground">
+                                  {unit.unitNumber}
+                                </td>
+                                <td className="px-4 py-3 text-foreground">
+                                  {formatCurrency(
+                                    unit.rent ?? 0,
+                                    activeCurrency,
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-foreground">
+                                  {occupied ? "Occupied" : "Available"}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => openUnitUploadDialog(unit)}
+                                    >
+                                      <ImagePlus className="mr-2 h-4 w-4" />
+                                      Upload
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() =>
+                                        openUnitGalleryDialog(unit)
+                                      }
+                                    >
+                                      <Eye className="mr-2 h-4 w-4" />
+                                      Gallery
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <Card className="border border-border p-8 text-center">
+                      <Home className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                      <p className="text-muted-foreground">
+                        No units available for this property
+                      </p>
+                    </Card>
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* Tenants Tab */}
+              <TabsContent value="tenants" className="p-6">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-bold text-foreground">
@@ -1274,54 +1630,6 @@ export default function PropertyDetailPage({
                       Add Tenant
                     </Button>
                   </div>
-                  {unitRecords.length > 0 && (
-                    <div className="mb-6 overflow-x-auto">
-                      <h4 className="text-base font-semibold text-foreground mb-3">
-                        Unit Inventory
-                      </h4>
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-border">
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">
-                              Unit
-                            </th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">
-                              Rent
-                            </th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">
-                              Status
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {unitRecords.map((unit: any, index: number) => {
-                            const occupied = propertyTenants.some(
-                              (tenant) => tenant.unitNumber === unit.unitNumber,
-                            );
-                            return (
-                              <tr
-                                key={`${unit.unitNumber}-${index}`}
-                                className="border-b border-border hover:bg-secondary"
-                              >
-                                <td className="px-4 py-3 font-semibold text-foreground">
-                                  {unit.unitNumber}
-                                </td>
-                                <td className="px-4 py-3 text-foreground">
-                                  {formatCurrency(
-                                    unit.rent ?? 0,
-                                    activeCurrency,
-                                  )}
-                                </td>
-                                <td className="px-4 py-3 text-foreground">
-                                  {occupied ? "Occupied" : "Available"}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
                   {propertyTenants.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -1381,8 +1689,10 @@ export default function PropertyDetailPage({
                               </td>
                               <td className="px-4 py-3 font-semibold text-foreground">
                                 {formatCurrency(
-                                  tenant.rentAmount ?? 0,
+                                  tenant.rentAmount,
                                   activeCurrency,
+                                  undefined,
+                                  { convert: false },
                                 )}
                               </td>
                               <td className="px-4 py-3">
@@ -1656,11 +1966,14 @@ export default function PropertyDetailPage({
                               TOTAL
                             </td>
                             <td className="px-4 py-3 font-bold text-green-600 dark:text-green-400">
-                              {formatCurrency(tenantCollected, activeCurrency)}
+                              {formatCurrency(
+                                totalMonthlyIncome,
+                                activeCurrency,
+                              )}
                             </td>
                             <td className="px-4 py-3 font-bold text-green-600 dark:text-green-400">
                               {formatCurrency(
-                                tenantCollected * 12,
+                                totalAnnualIncome,
                                 activeCurrency,
                               )}
                             </td>

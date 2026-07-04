@@ -128,9 +128,13 @@ export default function DashboardLayout({
   const { settings } = useSettings();
   const { tenants: allTenants, expenses, maintenanceRequests } = useAppData();
 
-  // Read timeout minutes from settings (stored as minutes)
-  const timeoutMinutes = settings?.security?.autoLogout?.durationMinutes;
-  const timeoutSeconds = timeoutMinutes ? timeoutMinutes * 60 : undefined;
+  // Read timeout minutes from settings (stored as minutes).
+  // Disable the timer entirely when auto logout is turned off.
+  const autoLogoutEnabled = settings?.security?.autoLogout?.enabled;
+  const timeoutSeconds =
+    autoLogoutEnabled && settings?.security?.autoLogout?.durationMinutes
+      ? settings.security.autoLogout.durationMinutes * 60
+      : undefined;
 
   const handleAutoLogout = useCallback(async () => {
     try {

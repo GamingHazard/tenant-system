@@ -172,7 +172,6 @@ export interface TenantPortalSettings {
   };
   financeSettings?: {
     currency: string;
-    exchangeRates: Record<string, number>;
     paymentMethods: Array<{
       type: string;
       enabled: boolean;

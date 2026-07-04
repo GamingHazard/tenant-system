@@ -102,12 +102,27 @@ export default function AddExpenseForm({
     if (name === "property") {
       const prop = properties.find((p) => p.id === value);
       if (prop && Array.isArray(prop.units) && prop.units.length > 0) {
-        setAvailableUnits(prop.units);
-        if (prop.units.length === 1) {
+        const normalizedUnits = prop.units
+          .map((unit) => {
+            if (typeof unit === "string") return unit;
+            if (unit && typeof unit === "object") {
+              return String(
+                (unit as any).unitNumber ||
+                  (unit as any).unit ||
+                  (unit as any).name ||
+                  "",
+              );
+            }
+            return "";
+          })
+          .filter((unit) => unit);
+
+        setAvailableUnits(normalizedUnits);
+        if (normalizedUnits.length === 1) {
           setFormData((prev) => ({
             ...prev,
             property: value,
-            unit: prop.units[0],
+            unit: normalizedUnits[0],
           }));
           return;
         }
@@ -376,8 +391,8 @@ export default function AddExpenseForm({
                   className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground"
                 >
                   <option value="">Select Unit</option>
-                  {availableUnits.map((u) => (
-                    <option key={u} value={u}>
+                  {availableUnits.map((u, idx) => (
+                    <option key={idx} value={u}>
                       {u}
                     </option>
                   ))}

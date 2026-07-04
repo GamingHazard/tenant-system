@@ -71,6 +71,10 @@ export default function RecordPaymentForm({
       if ((t as any)?.propertyId && !propertyId) {
         setPropertyId((t as any).propertyId);
       }
+
+      if ((t as any)?.currentBalance && (t as any).currentBalance > 0) {
+        setOutstandingBalance((t as any).currentBalance);
+      }
     }
     if (!tenantId && initialTenantId) setTenantId(initialTenantId as string);
     if (!propertyId && initialPropertyId)
@@ -87,7 +91,7 @@ export default function RecordPaymentForm({
           setOutstandingBalance(data.outstandingBalance);
           // If the current reason is balancePayment, show outstanding balance
           if (reasonForPayment === "balancePayment") {
-            setBalance(data.outstandingBalance.toFixed(2));
+            setBalance(data.outstandingBalance.toLocaleString());
           }
         } else {
           setOutstandingBalance(null);
@@ -111,13 +115,13 @@ export default function RecordPaymentForm({
 
     if (outstandingBalance !== null) {
       const newBal = Math.max(0, outstandingBalance - amountNum);
-      setBalance(newBal.toFixed(2));
+      setBalance(newBal.toLocaleString());
       return;
     }
 
     if (monthlyRent !== null) {
       const newBal = Math.max(0, monthlyRent - amountNum);
-      setBalance(newBal.toFixed(2));
+      setBalance(newBal.toLocaleString());
       return;
     }
 
@@ -134,7 +138,7 @@ export default function RecordPaymentForm({
     return tenants.map((t: any) => ({
       value: t.id,
       label: t.name || "Unknown Tenant",
-      description: `${t.unit || t.propertyName || "N/A"} — ${t.email || "No email"}`,
+      description: `${t.unitNumber || "N/A"} — ${t.email || "No email"}`,
     }));
   }, [tenants]);
 
@@ -162,11 +166,25 @@ export default function RecordPaymentForm({
       leaseType: leaseType || undefined,
       paidBy: paidBy || undefined,
       reasonForPayment,
+      balance: Number(balance),
       notes: notes || undefined,
     };
 
+    // Attach balance context so backend can persist correct balances for partial payments
+    const amountNum = Number(amount) || 0;
+    const prior =
+      outstandingBalance !== null
+        ? Number(outstandingBalance)
+        : Number(monthlyRent ?? 0);
+    const balanceAfter = Math.max(0, prior - amountNum);
+    payload.priorBalance = Number(prior || 0);
+    payload.balanceAfterPayment = Number(balanceAfter || 0);
+    // allow explicit balance override for security deposits
+    payload.balance =
+      reasonForPayment === "securityDeposit"
+        ? Number(balance)
+        : Number(balanceAfter || 0);
     if (reasonForPayment === "securityDeposit") {
-      payload.balance = Number(balance);
       payload.status = status;
     }
 
@@ -261,7 +279,7 @@ export default function RecordPaymentForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="text-xs text-muted-foreground block mb-1">
             Payment Method
@@ -278,15 +296,15 @@ export default function RecordPaymentForm({
             <option value="card">Card</option>
           </select>
         </div>
-        <div>
+        <div className="hidden  ">
           <label className="text-xs text-muted-foreground block mb-1">
             Payment Status
           </label>
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="w-full border border-border rounded px-3 py-2 bg-transparent"
-            disabled={reasonForPayment === "balancePayment"}
+            className="w-full hidden border border-border rounded px-3 py-2 bg-transparent"
+            disabled={true}
           >
             <option value="complete">Complete</option>
             <option value="balance">Balance</option>
@@ -346,7 +364,7 @@ export default function RecordPaymentForm({
           />
           {outstandingBalance !== null && (
             <div className="mt-1 text-xs text-muted-foreground">
-              Outstanding: ${outstandingBalance.toFixed(2)}
+              Outstanding: ${outstandingBalance.toLocaleString()}
             </div>
           )}
         </div>

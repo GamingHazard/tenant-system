@@ -79,6 +79,8 @@ export default function MakePaymentPage() {
   const [processing, setProcessing] = useState(false);
   const [savedPayment, setSavedPayment] = useState<RentPayment | null>(null);
   const [polling, setPolling] = useState(false);
+  const mpesaGatewayDisabled =
+    process.env.NEXT_PUBLIC_DISABLE_MPESA_GATEWAY === "true";
   const tenantPayments = tenant
     ? payments.filter((p) => p.tenantId === tenant.id)
     : [];
@@ -204,6 +206,7 @@ export default function MakePaymentPage() {
   const selectedMethodDescription = getPaymentMethodDescription(
     selectedPaymentMethod,
   );
+  const selectedMethodType = selectedPaymentMethod?.type || "";
   const requiresPhoneNumber =
     selectedPaymentMethod &&
     MOBILE_MONEY_TYPES.has(selectedPaymentMethod.type as PaymentMethodType);
@@ -349,6 +352,9 @@ export default function MakePaymentPage() {
         const payload: Partial<RentPayment> & {
           phoneNumber?: string;
           method?: string;
+          priorBalance?: number;
+          balanceAfterPayment?: number;
+          balance?: number;
         } = {
           tenantId: tenant?.id || user?.id || "",
           propertyId: tenant?.propertyId || property?.id,
@@ -364,6 +370,16 @@ export default function MakePaymentPage() {
               : "Tenant-initiated rent payment",
         };
 
+        // Compute and attach balance fields so server receives the context
+        const prior =
+          outstandingBalance != null
+            ? Number(outstandingBalance)
+            : Number(computedOutstandingBalance || 0);
+        const balanceAfter = Math.max(0, prior - paymentAmount);
+        payload.priorBalance = Number(prior || 0);
+        payload.balanceAfterPayment = Number(balanceAfter || 0);
+        payload.balance = Number(balanceAfter || 0);
+
         if (selectedPaymentMethod) {
           payload.notes += ` - Selected method: ${getPaymentMethodLabel(
             selectedPaymentMethod,
@@ -375,11 +391,18 @@ export default function MakePaymentPage() {
         if (requiresPhoneNumber) {
           payload.paymentMethod = "mpesa";
           payload.phoneNumber = phoneNumber;
-          rec = await createMpesaPayment(
-            payload as Partial<RentPayment> & {
-              phoneNumber: string;
-            },
-          );
+
+          if (mpesaGatewayDisabled) {
+            payload.notes +=
+              " (M-Pesa gateway disabled; payment saved locally)";
+            rec = await createManualPayment(payload);
+          } else {
+            rec = await createMpesaPayment(
+              payload as Partial<RentPayment> & {
+                phoneNumber: string;
+              },
+            );
+          }
         } else {
           payload.paymentMethod =
             selectedMethodType === "Bank_Transfer"

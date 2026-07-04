@@ -36,6 +36,7 @@ const currencyLocaleMap: Record<string, string> = {
   ARS: "es-AR",
   KES: "en-KE",
   NGN: "en-NG",
+  UGX: "en-UG",
 };
 
 const currencySymbolAlias: Record<string, string> = {
@@ -46,42 +47,28 @@ const currencySymbolAlias: Record<string, string> = {
   HKD: "HK$",
 };
 
-const DEFAULT_EXCHANGE_RATES: Record<string, number> = {
-  USD: 1,
-  EUR: 0.92,
-  GBP: 0.79,
-  KES: 140,
-};
-
-export function getExchangeRates(): Record<string, number> {
-  const settings = getSystemSettings();
-  return (
-    settings?.tenantPortalSettings?.financeSettings?.exchangeRates ||
-    DEFAULT_EXCHANGE_RATES
-  );
+function normalizeCurrencyCode(
+  currencyCode: string | null | undefined,
+  fallback = "USD",
+) {
+  const normalized = String(currencyCode ?? fallback)
+    .trim()
+    .toUpperCase();
+  return normalized || fallback;
 }
 
-export function convertCurrency(
-  amount: number | string | null | undefined,
-  currency: string = "USD",
-  baseCurrency: string = "USD",
-) {
-  const numeric = Number(amount ?? 0);
-  const target = String(currency || "USD").toUpperCase();
-  const base = String(baseCurrency || "USD").toUpperCase();
-  const rates = getExchangeRates();
+function parseNumericAmount(amount: number | string | null | undefined) {
+  const parsed = typeof amount === "number" ? amount : Number(amount ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
-  const baseRate = rates[base] ?? (base === "USD" ? 1 : undefined);
-  const targetRate = rates[target] ?? (target === "USD" ? 1 : undefined);
-  if (baseRate === undefined || targetRate === undefined) {
-    return numeric;
-  }
-
-  return (numeric / baseRate) * targetRate;
+export function getExchangeRates(): Record<string, number> {
+  // Exchange rates no longer used; return empty
+  return {};
 }
 
 export function getLocaleForCurrency(currencyCode: string = "USD") {
-  const normalized = String(currencyCode || "USD").toUpperCase();
+  const normalized = normalizeCurrencyCode(currencyCode);
   return currencyLocaleMap[normalized] || "en-US";
 }
 
@@ -90,22 +77,25 @@ export function formatCurrency(
   currency: string = "USD",
   locale?: string,
 ) {
-  const numeric = Number(amount ?? 0);
-  const convertedAmount = convertCurrency(numeric, currency);
-  const code = String(currency || "USD").toUpperCase();
+  const numeric = parseNumericAmount(amount);
+  const code = normalizeCurrencyCode(currency);
   const resolvedLocale = locale || getLocaleForCurrency(code);
 
   try {
     const formatter = new Intl.NumberFormat(resolvedLocale, {
       style: "currency",
       currency: code,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     });
 
-    let formatted = formatter.format(convertedAmount);
+    let formatted = formatter.format(numeric);
     const narrowSymbol = new Intl.NumberFormat(resolvedLocale, {
       style: "currency",
       currency: code,
       currencyDisplay: "narrowSymbol",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     })
       .format(0)
       .replace(/[0-9\s.,]/g, "");
@@ -126,7 +116,7 @@ export function formatCurrency(
 }
 
 export function getCurrencySymbol(currency: string = "USD", locale?: string) {
-  const code = String(currency || "USD").toUpperCase();
+  const code = normalizeCurrencyCode(currency);
   const resolvedLocale = locale || getLocaleForCurrency(code);
 
   try {
@@ -148,11 +138,12 @@ export function getCurrencySymbol(currency: string = "USD", locale?: string) {
 }
 
 export function getActiveCurrency(): string {
-  const settings = getSystemSettings();
+  const settings = getSystemSettings() as any;
   const currencyCode =
     settings?.tenantPortalSettings?.financeSettings?.currency ||
-    (settings as any)?.finance?.currency?.code ||
+    settings?.finance?.currency?.code ||
+    settings?.currency ||
     "USD";
 
-  return String(currencyCode).toUpperCase();
+  return normalizeCurrencyCode(currencyCode);
 }

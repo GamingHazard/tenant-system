@@ -23,6 +23,7 @@ import {
 import { useAppData } from "@/lib/data-context";
 import { getAllExpenses } from "@/lib/services/expenses";
 import { listPaymentsApi } from "@/lib/services/payments";
+import { listAuditLogs } from "@/lib/services/audit";
 import {
   AdminSkeletonHeader,
   AdminTableSkeleton,
@@ -106,8 +107,18 @@ export default function DashboardPage() {
     refetchInterval: 5000,
   });
 
+  const dashboardActivityQuery = useQuery({
+    queryKey: ["dashboardActivity", token || ""],
+    queryFn: async () => listAuditLogs(),
+    enabled: Boolean(token),
+    staleTime: 1000 * 60 * 2,
+    refetchOnWindowFocus: false,
+    refetchInterval: 10000,
+  });
+
   const paymentsData = dashboardPaymentsQuery.data ?? payments;
   const expensesData = dashboardExpensesQuery.data ?? expenses;
+  const activityEntries = dashboardActivityQuery.data ?? [];
   const [isHydrated, setIsHydrated] = useState(false);
   const activeCurrency = useActiveCurrency();
 
@@ -228,25 +239,6 @@ export default function DashboardPage() {
       );
     };
 
-    const totalMonthlyRevenue = paymentsData.reduce((sum, payment) => {
-      const status = String(payment.status || "").toLowerCase();
-      if (!revenueStatuses.has(status)) return sum;
-      const paymentDate =
-        payment.date ||
-        payment.paymentDate ||
-        payment.paidOn ||
-        payment.createdAt;
-      const date = new Date(String(paymentDate || ""));
-      if (Number.isNaN(date.getTime())) return sum;
-      const monthKey = `${date.getUTCFullYear()}-${String(
-        date.getUTCMonth() + 1,
-      ).padStart(2, "0")}`;
-      if (monthKey !== currentMonthKey) return sum;
-      return (
-        sum + normalizeNumber(payment.amount ?? payment.total ?? payment.value)
-      );
-    }, 0);
-
     const totalExpectedRent = properties.reduce((sum, property) => {
       const units = Array.isArray(property.units) ? property.units : [];
       if (units.length > 0) {
@@ -265,6 +257,27 @@ export default function DashboardPage() {
       );
       return sum + unitRent * unitCount;
     }, 0);
+
+    const monthlyPaymentRevenue = paymentsData.reduce((sum, payment) => {
+      const status = String(payment.status || "").toLowerCase();
+      if (!revenueStatuses.has(status)) return sum;
+      const paymentDate =
+        payment.date ||
+        payment.paymentDate ||
+        payment.paidOn ||
+        payment.createdAt;
+      const date = new Date(String(paymentDate || ""));
+      if (Number.isNaN(date.getTime())) return sum;
+      const monthKey = `${date.getUTCFullYear()}-${String(
+        date.getUTCMonth() + 1,
+      ).padStart(2, "0")}`;
+      if (monthKey !== currentMonthKey) return sum;
+      return (
+        sum + normalizeNumber(payment.amount ?? payment.total ?? payment.value)
+      );
+    }, 0);
+
+    const totalMonthlyRevenue = monthlyPaymentRevenue;
 
     const totalYtdRevenue = paymentsData.reduce((sum, payment) => {
       const status = String(payment.status || "").toLowerCase();
@@ -584,26 +597,53 @@ export default function DashboardPage() {
       .sort((a, b) => b.value - a.value);
   }, [expenses]);
 
-  // Prepare recent activity from real payments
+  // Prepare recent activity from persisted audit logs
   const recentActivity = useMemo(() => {
-    return payments
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 6)
-      .map((payment) => {
-        const tenant = tenants.find((t) => t.id === payment.tenantId);
-        const property = properties.find((p) => p.id === payment.propertyId);
+    return activityEntries.slice(0, 6).map((entry) => {
+      const action = String(entry.action || "activity").toLowerCase();
+      const isPayment = action.includes("payment");
+      const isExpense = action.includes("expense");
+      const isProperty = action.includes("property");
+      const isTenant = action.includes("tenant");
+      const isMaintenance = action.includes("maintenance");
 
-        return {
-          id: payment.id,
-          type: "payment",
-          tenant: tenant?.name || "Unknown Tenant",
-          property: property?.name || "Unknown Property",
-          amount: payment.amount,
-          date: new Date(payment.date).toLocaleDateString(),
-          description: payment.note || "Payment received",
-        };
-      });
-  }, [payments, tenants, properties]);
+      let title = entry.details || "System activity";
+      let type: "payment" | "expense" | "property" | "tenant" | "maintenance" =
+        "property";
+      let amountLabel = "";
+
+      if (isPayment) {
+        type = "payment";
+        title = entry.details || "Payment activity";
+      } else if (isExpense) {
+        type = "expense";
+        title = entry.details || "Expense activity";
+      } else if (isMaintenance) {
+        type = "maintenance";
+        title = entry.details || "Maintenance activity";
+      } else if (isTenant) {
+        type = "tenant";
+        title = entry.details || "Tenant activity";
+      } else if (isProperty) {
+        type = "property";
+        title = entry.details || "Property activity";
+      }
+
+      const dateLabel = entry.createdAt
+        ? new Date(entry.createdAt).toLocaleDateString()
+        : "Recently updated";
+
+      return {
+        id: entry.id || entry.resourceId || `${entry.action}-${dateLabel}`,
+        type,
+        title,
+        property: entry.resourceType || "System",
+        amount: 0,
+        date: dateLabel,
+        description: entry.details || "Activity recorded",
+      };
+    });
+  }, [activityEntries]);
 
   if (isPageLoading) {
     return (
@@ -651,7 +691,7 @@ export default function DashboardPage() {
       {/* Key Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4">
         {/* Total Properties */}
-        <Card className="border border-border p-4 md:p-6">
+        <Card className="border relative border-border p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
@@ -664,14 +704,14 @@ export default function DashboardPage() {
                 {isHydrated ? `${metrics.totalUnits} units total` : "—"}
               </p>
             </div>
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-10 absolute top-2 right-2 h-10 md:w-12 md:h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
               <Building2 className="w-5 h-5 md:w-6 md:h-6 text-primary" />
             </div>
           </div>
         </Card>
 
         {/* Occupancy Rate */}
-        <Card className="border border-border p-4 md:p-6">
+        <Card className="border relative border-border p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
@@ -684,23 +724,23 @@ export default function DashboardPage() {
                 Based on current tenants
               </p>
             </div>
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
-              <Home className="w-5 h-5 md:w-6 md:h-6 text-green-600 dark:text-green-400" />
+            <div className="w-10 absolute top-2 right-2 h-10 md:w-12 md:h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Home className="w-5  h-5 md:w-6 md:h-6 text-green-600 dark:text-green-400" />
             </div>
           </div>
         </Card>
 
         {/* Monthly Revenue */}
-        <Card className="border border-border p-4 md:p-6">
+        <Card className="border relative border-border p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
-                Monthly Revenue
+                This Month's Revenue
               </p>
-              <p className="text-lg md:text-sm font-bold text-foreground">
+              <p className="text-2xl md:text-xl font-bold text-foreground">
                 {showPaymentCardSkeleton ? (
                   <span className="inline-block">
-                    <Skeleton className="h-7 w-32 rounded-xl" />
+                    <Skeleton className="h-10 w-32 rounded-xl" />
                   </span>
                 ) : (
                   formatCurrency(metrics.totalMonthlyRevenue, activeCurrency)
@@ -710,14 +750,14 @@ export default function DashboardPage() {
                 Includes completed and partial rent payments this month
               </p>
             </div>
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-10 absolute top-2 right-2 h-10 md:w-12 md:h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
               <DollarSign className="w-5 h-5 md:w-6 md:h-6 text-green-600 dark:text-green-400" />
             </div>
           </div>
         </Card>
 
         {/* Pending Payments */}
-        <Card className="border border-border p-4 md:p-6">
+        <Card className="border relative border-border p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
@@ -743,14 +783,14 @@ export default function DashboardPage() {
                 )}
               </p>
             </div>
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-red-100 dark:bg-red-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-10 absolute top-2 right-2 h-10 md:w-12 md:h-12 bg-red-100 dark:bg-red-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
               <AlertCircle className="w-5 h-5 md:w-6 md:h-6 text-red-600 dark:text-red-400" />
             </div>
           </div>
         </Card>
 
         {/* Open Maintenance */}
-        <Card className="border border-border p-4 md:p-6">
+        <Card className="border relative border-border p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
@@ -763,14 +803,14 @@ export default function DashboardPage() {
                 Pending requests
               </p>
             </div>
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-10 absolute top-2 right-2 h-10 md:w-12 md:h-12 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
               <Wrench className="w-5 h-5 md:w-6 md:h-6 text-yellow-600 dark:text-yellow-400" />
             </div>
           </div>
         </Card>
 
         {/* YTD Profit */}
-        <Card className="border border-border p-4 md:p-6">
+        <Card className="border relative border-border p-4 md:p-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
@@ -787,7 +827,7 @@ export default function DashboardPage() {
                 After estimated expenses
               </p>
             </div>
-            <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-10 absolute top-2 right-2 h-10 md:w-12 md:h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
               <TrendingUp className="w-5 h-5 md:w-6 md:h-6 text-primary" />
             </div>
           </div>
@@ -857,33 +897,46 @@ export default function DashboardPage() {
           <h2 className="text-lg font-bold text-foreground">Recent Activity</h2>
         </div>
         <div className="space-y-3">
-          {recentActivity.map((activity) => (
-            <div
-              key={activity.id}
-              className="flex items-center justify-between py-3 border-b border-border last:border-0"
-            >
-              <div className="flex-1">
-                <p className="font-medium text-foreground">
-                  {activity.type === "payment"
-                    ? `Payment from ${activity.tenant}`
-                    : `Expense: ${activity.description}`}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {activity.property}
-                </p>
-              </div>
-              <div className="text-right">
-                <p
-                  className={`font-bold ${activity.type === "payment" ? "text-green-600" : "text-red-600"}`}
-                >
-                  {activity.type === "payment" ? "+" : "-"}
-                  {getCurrencySymbol(activeCurrency)}{" "}
-                  {activity.amount.toLocaleString()}
-                </p>
-                <p className="text-xs text-muted-foreground">{activity.date}</p>
-              </div>
+          {recentActivity.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+              No recent activity yet. Create or update records to populate this
+              feed.
             </div>
-          ))}
+          ) : (
+            recentActivity.map((activity) => (
+              <div
+                key={activity.id}
+                className="flex items-center justify-between py-3 border-b border-border last:border-0"
+              >
+                <div className="flex-1">
+                  <p className="font-medium text-foreground">
+                    {activity.title}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {activity.property}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p
+                    className={`font-semibold ${activity.type === "payment" ? "text-green-600" : activity.type === "expense" ? "text-red-600" : "text-foreground"}`}
+                  >
+                    {activity.type === "payment"
+                      ? "Payment"
+                      : activity.type === "expense"
+                        ? "Expense"
+                        : activity.type === "maintenance"
+                          ? "Maintenance"
+                          : activity.type === "tenant"
+                            ? "Tenant"
+                            : "Property"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {activity.date}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </Card>
 

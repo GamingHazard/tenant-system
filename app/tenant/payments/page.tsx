@@ -143,6 +143,9 @@ export default function PaymentsPage() {
     selectedPaymentMethod &&
     MOBILE_MONEY_TYPES.has(selectedPaymentMethod.type as PaymentMethodType);
 
+  const mpesaGatewayDisabled =
+    process.env.NEXT_PUBLIC_DISABLE_MPESA_GATEWAY === "true";
+
   useEffect(() => {
     if (!method && paymentMethods.length > 0) {
       setMethod(getPaymentMethodId(paymentMethods[0]));
@@ -259,9 +262,16 @@ export default function PaymentsPage() {
         if (requiresPhoneNumber) {
           payload.paymentMethod = "mpesa";
           payload.phoneNumber = phoneNumber;
-          rec = await createMpesaPayment(
-            payload as Partial<RentPayment> & { phoneNumber: string },
-          );
+
+          if (mpesaGatewayDisabled) {
+            payload.notes +=
+              " (M-Pesa gateway disabled; payment saved locally)";
+            rec = await createManualPayment(payload);
+          } else {
+            rec = await createMpesaPayment(
+              payload as Partial<RentPayment> & { phoneNumber: string },
+            );
+          }
         } else {
           payload.paymentMethod =
             selectedPaymentMethod?.type === "Bank_Transfer"

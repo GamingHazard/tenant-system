@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ import {
 } from "@/lib/services/payments";
 import { formatCurrency } from "@/lib/currency";
 import { useActiveCurrency } from "@/lib/hooks/use-active-currency";
+import { useSettings } from "@/lib/settings-context";
 import {
   BarChart,
   Bar,
@@ -63,7 +65,9 @@ import {
   FileText,
   MoreHorizontal,
   Printer,
-  Share2,
+  Loader,
+  Trash,
+  Trash2,
 } from "lucide-react";
 import {
   AdminSkeletonHeader,
@@ -84,6 +88,7 @@ export default function FinancesPage() {
   const [activeTab, setActiveTab] = useState("rent-collection");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<
+    | "all"
     | "complete"
     | "balance"
     | "pending"
@@ -95,6 +100,13 @@ export default function FinancesPage() {
   const [rentCurrentPage, setRentCurrentPage] = useState(1);
   const [expenseCurrentPage, setExpenseCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
+  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(
+    null,
+  );
+  const [softDeletedPaymentIds, setSoftDeletedPaymentIds] = useState<string[]>(
+    [],
+  );
+  const pendingDeleteTimers = useRef<Map<string, number>>(new Map());
 
   const {
     tenants: allTenants,
@@ -112,7 +124,7 @@ export default function FinancesPage() {
     paymentsError,
     expensesError,
   } = useAppData();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   const rentPaymentsQuery = useQuery({
     queryKey: [
@@ -161,17 +173,163 @@ export default function FinancesPage() {
     refetchInterval: 5000,
   });
 
-  const [transactions, setTransactions] = useState<any[]>([]);
   const activeCurrency = useActiveCurrency();
+  const { settings } = useSettings();
+  const companyTitle =
+    settings?.companyInfo?.name?.trim() || "Aurex Property Manager";
+  const companyAddress = settings?.companyInfo?.address;
+  const companyContact =
+    settings?.companyInfo?.phone?.trim() || "Aurex Property Manager";
+  const companyEmail =
+    settings?.companyInfo?.email?.trim() || "Aurex Property Manager";
+  const companyAddressStr = companyAddress
+    ? `${companyAddress.street || ""}${companyAddress.city ? ", " + companyAddress.city : ""}${companyAddress.state ? ", " + companyAddress.state : ""}${companyAddress.country ? ", " + companyAddress.country : ""}`
+    : "";
 
   const paymentsData =
     payments.length > 0 ? payments : (rentPaymentsQuery.data ?? []);
+
+  const handleDownloadPaymentReceipt = async (payment: any) => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const module = await import("jspdf");
+      const { jsPDF } = module;
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const margin = 40;
+      const lineHeight = 18;
+      const receiptTop = 56;
+
+      const tenantName =
+        payment.tenantName ||
+        payment.tenant?.name ||
+        allTenants.find(
+          (tenant: any) =>
+            tenant.id === payment.tenantId || tenant._id === payment.tenantId,
+        )?.name ||
+        "Tenant";
+      const propertyName =
+        payment.propertyName ||
+        payment.property?.name ||
+        allProperties.find(
+          (property: any) =>
+            property.id === payment.propertyId ||
+            property._id === payment.propertyId,
+        )?.name ||
+        "Property";
+      const receiptNumber = payment.transId || payment.id || "N/A";
+      const paidDate =
+        payment.paidOn || payment.paymentDate || payment.date || new Date();
+      const amount = formatCurrency(payment.amount || 0, activeCurrency);
+      const balance = formatCurrency(payment.balance || 0, activeCurrency);
+      const status = String(payment.status || "Pending");
+      const method = String(payment.method || "—");
+      const note = String(
+        payment.note || payment.notes || payment.description || "—",
+      );
+      const bank = String(payment.bank || payment.bankName || "—");
+      const chequeNumber = String(
+        payment.chequeNumber || payment.chequeNo || "",
+      );
+      const paidBy = payment.paidBy || payment.payer || tenantName;
+      const amountWords = `${amount}`;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(20);
+      doc.text(companyTitle, margin, receiptTop);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      if (companyAddressStr) {
+        doc.text(companyAddressStr, margin, receiptTop + 24);
+      }
+
+      doc.text(companyEmail, margin, receiptTop + 56);
+      doc.text(companyContact, margin, receiptTop + 40);
+      doc.text("Receipt for rent payment", margin, receiptTop + 72);
+
+      const rightColumnX = 420;
+      doc.setFontSize(10);
+      doc.text("Receipt No.", rightColumnX, receiptTop);
+      doc.setFont("helvetica", "bold");
+      doc.text(receiptNumber, rightColumnX, receiptTop + 16);
+      doc.setFont("helvetica", "normal");
+      doc.text("Date", rightColumnX, receiptTop + 36);
+      doc.text(
+        new Date(paidDate).toLocaleDateString(),
+        rightColumnX,
+        receiptTop + 52,
+      );
+
+      const sectionTop = receiptTop + 80;
+      doc.setLineWidth(0.5);
+      doc.line(margin, sectionTop, 555, sectionTop);
+
+      let y = sectionTop + 24;
+      doc.setFontSize(11);
+      doc.text("Received from:", margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(paidBy === user ? "Administration" : paidBy, margin + 110, y);
+
+      y += lineHeight;
+      doc.setFont("helvetica", "normal");
+      doc.text("The sum of:", margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(amountWords, margin + 110, y);
+
+      y += lineHeight;
+      doc.setFont("helvetica", "normal");
+      doc.text("Payment Method:", margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(method === "manual" ? "Cash" : method, margin + 110, y);
+
+      // y += lineHeight;
+      // doc.setFont("helvetica", "normal");
+      // doc.text("Bank:", margin, y);
+      // doc.setFont("helvetica", "bold");
+      // doc.text(bank, margin + 110, y);
+
+      y += lineHeight;
+      doc.setFont("helvetica", "normal");
+      doc.text("Balance:", margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(balance, margin + 110, y);
+
+      y += lineHeight;
+      doc.setFont("helvetica", "normal");
+      doc.text("Property:", margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(propertyName, margin + 110, y);
+
+      y += lineHeight;
+      doc.setFont("helvetica", "normal");
+      doc.text("Notes:", margin, y);
+      doc.setFont("helvetica", "bold");
+      const wrappedNote = doc.splitTextToSize(note, 360);
+      doc.text(wrappedNote, margin + 110, y);
+      y += wrappedNote.length * lineHeight;
+
+      y += 16;
+      doc.setDrawColor(200);
+      doc.line(margin, y, 300, y);
+      y += 14;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text("With Thanks,", margin, y);
+      doc.text("Signature", rightColumnX, y);
+
+      const safeName = `${companyTitle}-${receiptNumber}`
+        .replace(/[^a-zA-Z0-9-_ ]/g, "")
+        .replace(/\s+/g, "-");
+      doc.save(`${safeName || "payment"}-receipt.pdf`);
+      toast.success("Receipt PDF downloaded");
+    } catch (error) {
+      console.error("Receipt PDF generation failed", error);
+      toast.error("Unable to generate receipt PDF");
+    }
+  };
+
   const expensesData =
     expenses.length > 0 ? expenses : (expensePageQuery.data ?? []);
-
-  useEffect(() => {
-    setTransactions(expensesData);
-  }, [expensesData]);
 
   useEffect(() => {
     setRentCurrentPage(1);
@@ -198,6 +356,10 @@ export default function FinancesPage() {
         window.removeEventListener("paymentsUpdated", refreshHandler);
         window.removeEventListener("expensesUpdated", refreshHandler);
       }
+      pendingDeleteTimers.current.forEach((timer) =>
+        window.clearTimeout(timer),
+      );
+      pendingDeleteTimers.current.clear();
     };
   }, [refetchAll]);
 
@@ -212,16 +374,78 @@ export default function FinancesPage() {
     };
   });
 
-  // Calculate financial metrics from persisted payments
-  const enrichedPayments = (paymentsData || []).map((p) => {
-    const tenant = allTenants.find((t) => t.id === p.tenantId);
-    const property = allProperties.find((pr) => pr.id === p.propertyId);
-    return {
-      ...p,
-      tenantName: tenant?.name || "Unknown Tenant",
-      propertyName: property?.name || "Unknown Property",
+  const enrichPaymentRecord = (payment: any) => {
+    const normalizeRecordId = (value: any) => {
+      if (!value) return null;
+      if (typeof value === "object") {
+        return String(value._id || value.id || value.value || "");
+      }
+      return String(value);
     };
-  });
+
+    const tenantId = normalizeRecordId(
+      payment?.tenantId ?? payment?.tenant?.id ?? payment?.tenant?._id,
+    );
+    const propertyId = normalizeRecordId(
+      payment?.propertyId ?? payment?.property?.id ?? payment?.property?._id,
+    );
+
+    const tenant = tenantId
+      ? allTenants.find(
+          (item) => String((item as any)._id || item.id) === tenantId,
+        )
+      : null;
+    const property = propertyId
+      ? allProperties.find(
+          (item) => String((item as any)._id || item.id) === propertyId,
+        )
+      : null;
+
+    const originalTxdId =
+      payment?.txdId ??
+      payment?.transId ??
+      payment?.transactionId ??
+      payment?.reference ??
+      payment?.receiptReference ??
+      payment?.id ??
+      null;
+    const originalNotes =
+      payment?.notes ??
+      payment?.note ??
+      payment?.description ??
+      payment?.reference ??
+      payment?.receiptReference ??
+      null;
+
+    return {
+      ...payment,
+      tenantName:
+        payment?.tenantName ||
+        payment?.tenant?.name ||
+        payment?.tenantDetails?.name ||
+        tenant?.name ||
+        "Unknown Tenant",
+      propertyName:
+        payment?.propertyName ||
+        payment?.property?.name ||
+        payment?.propertyDetails?.name ||
+        property?.name ||
+        "Unknown Property",
+      paidBy: payment?.paidBy || payment?.recordedBy || payment?.payer || null,
+      reasonForPayment:
+        payment?.reasonForPayment ?? payment?.reason ?? originalNotes ?? null,
+      notes: originalNotes,
+      txdId: originalTxdId,
+      transId: payment?.transId ?? originalTxdId,
+    };
+  };
+
+  // Calculate financial metrics from persisted payments
+  const enrichedPayments = useMemo(() => {
+    return (paymentsData || [])
+      .filter((payment) => !softDeletedPaymentIds.includes(payment.id))
+      .map((p) => enrichPaymentRecord(p));
+  }, [paymentsData, allTenants, allProperties, softDeletedPaymentIds]);
 
   const rentPayments = enrichedPayments;
   const tenantOutstandingBalances = useMemo(
@@ -313,11 +537,12 @@ export default function FinancesPage() {
     };
 
     const paymentMonth = (payment: any) => {
+      const paymentData = payment as any;
       const dateString =
-        payment.date ||
-        payment.paymentDate ||
-        payment.paidOn ||
-        payment.createdAt;
+        paymentData.date ||
+        paymentData.paymentDate ||
+        paymentData.paidOn ||
+        paymentData.createdAt;
       const date = new Date(dateString);
       if (Number.isNaN(date.getTime())) return null;
       return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
@@ -326,12 +551,13 @@ export default function FinancesPage() {
     };
 
     const expenseMonth = (expense: any) => {
+      const expenseData = expense as any;
       const dateString =
-        expense.date ||
-        expense.createdAt ||
-        expense.transactionDate ||
-        expense.postedAt ||
-        expense.entryDate;
+        expenseData.date ||
+        expenseData.createdAt ||
+        expenseData.transactionDate ||
+        expenseData.postedAt ||
+        expenseData.entryDate;
       const date = new Date(dateString);
       if (Number.isNaN(date.getTime())) return null;
       return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
@@ -345,10 +571,10 @@ export default function FinancesPage() {
       const status = String(payment.status || "").toLowerCase();
       const amount = normalizeAmount(
         payment.amount ??
-          payment.total ??
-          payment.value ??
-          payment.paymentAmount ??
-          payment.amountPaid,
+          (payment as any).total ??
+          (payment as any).value ??
+          (payment as any).paymentAmount ??
+          (payment as any).amountPaid,
       );
       const completeStatuses = [
         "complete",
@@ -370,10 +596,10 @@ export default function FinancesPage() {
       if (!monthKey || !map[monthKey]) return;
       const amount = normalizeAmount(
         expense.amount ??
-          expense.total ??
-          expense.value ??
-          expense.paymentAmount ??
-          expense.expenseAmount,
+          (expense as any).total ??
+          (expense as any).value ??
+          (expense as any).paymentAmount ??
+          (expense as any).expenseAmount,
       );
       map[monthKey].expenses += amount;
     });
@@ -447,7 +673,9 @@ export default function FinancesPage() {
     .filter(
       (expense) =>
         !searchQuery ||
-        expense.description.toLowerCase().includes(searchQuery.toLowerCase()),
+        (expense.description || "")
+          .toLowerCase()
+          .includes(searchQuery.toLowerCase()),
     );
 
   const totalRentPages = Math.max(
@@ -470,9 +698,20 @@ export default function FinancesPage() {
 
   const isServerRentPagination = rentPaymentsQuery.data !== undefined;
   const isServerExpensePagination = expensePageQuery.data !== undefined;
-  const rentPaymentsDisplay = isServerRentPagination
-    ? rentPaymentsQuery.data
-    : paginatedPayments;
+
+  const rentPaymentsDisplay = useMemo(() => {
+    const source = isServerRentPagination
+      ? (rentPaymentsQuery.data ?? [])
+      : paginatedPayments;
+    return source
+      .filter((payment: any) => !softDeletedPaymentIds.includes(payment.id))
+      .map((payment: any) => enrichPaymentRecord(payment));
+  }, [
+    isServerRentPagination,
+    rentPaymentsQuery.data,
+    paginatedPayments,
+    softDeletedPaymentIds,
+  ]);
   const expenseTransactionsDisplay = isServerExpensePagination
     ? expensePageQuery.data
     : paginatedExpenseTransactions;
@@ -485,18 +724,159 @@ export default function FinancesPage() {
     : expenseCurrentPage < totalExpensePages;
 
   const handleRowClick = (tx: any) => {
-    setSelectedTx(tx);
+    const payment = enrichPaymentRecord(tx);
+    setSelectedTx(payment);
     setIsEditingTx(false);
     setTxFormData({
-      ...tx,
-      amount: tx.amount.toString(),
+      ...payment,
+      amount: payment.amount.toString(),
     });
     setIsTxDialogOpen(true);
   };
 
+  const handlePrintPaymentReceipt = (payment: any) => {
+    if (!payment) return;
+    if (typeof window === "undefined") return;
+
+    const receiptPayment = enrichPaymentRecord(payment);
+    const receiptDate =
+      receiptPayment.paidOn ||
+      receiptPayment.paymentDate ||
+      receiptPayment.date;
+    const receiptBalance = Number(
+      receiptPayment.balanceAfterPayment ?? receiptPayment.balance ?? 0,
+    );
+    const companyName =
+      settings?.companyInfo?.name?.trim() || "Aurex Property Manager";
+    const html = `<!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Payment Receipt ${receiptPayment.transId || receiptPayment.id}</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #111827; margin: 24px; }
+            .container { max-width: 720px; margin: 0 auto; border: 1px solid #d1d5db; border-radius: 12px; padding: 24px; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #e5e7eb; padding-bottom: 16px; }
+            .title { font-size: 24px; font-weight: 700; margin: 0; }
+            .sub { color: #6b7280; margin-top: 4px; }
+            .summary { margin-top: 20px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; }
+            .amount { font-size: 28px; font-weight: 700; margin-top: 6px; }
+            .details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+            .detail { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+            .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; }
+            .value { margin-top: 4px; font-weight: 600; }
+            .footer { margin-top: 20px; color: #6b7280; font-size: 13px; }
+            @media print { body { margin: 0; } .container { border: none; box-shadow: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <div>
+                <h1 class="title">${companyName}</h1>
+                <p class="sub">Receipt for rent payment</p>
+              </div>
+              <div style="text-align: right;">
+                <div class="label">Receipt No.</div>
+                <div class="value">${receiptPayment.transId || receiptPayment.id}</div>
+                <div class="sub">${receiptDate ? new Date(receiptDate).toLocaleString() : "—"}</div>
+              </div>
+            </div>
+            <div class="summary">
+              <div class="label">Amount Paid</div>
+              <div class="amount">${formatCurrency(receiptPayment.amount || 0, activeCurrency)}</div>
+              <div class="sub">Status: ${String(receiptPayment.status || "complete").toUpperCase()}</div>
+            </div>
+            <div class="details">
+              <div class="detail"><div class="label">Tenant</div><div class="value">${receiptPayment.tenantName || "—"}</div></div>
+              <div class="detail"><div class="label">Property</div><div class="value">${receiptPayment.propertyName || "—"}</div></div>
+              <div class="detail"><div class="label">Payer</div><div class="value">${receiptPayment.paidBy || "—"}</div></div>
+              <div class="detail"><div class="label">Balance</div><div class="value">${formatCurrency(receiptBalance, activeCurrency)}</div></div>
+              <div class="detail"><div class="label">Date</div><div class="value">${receiptDate ? new Date(receiptDate).toLocaleDateString() : "—"}</div></div>
+              <div class="detail"><div class="label">Payment Method</div><div class="value">${receiptPayment.paymentMethod || "—"}</div></div>
+            </div>
+            <div class="detail" style="margin-top: 16px;"><div class="label">Reason for payment</div><div class="value">${receiptPayment.reasonForPayment || "—"}</div></div>
+            <div class="footer">Thank you for your payment. Please keep this receipt for your records.</div>
+          </div>
+        </body>
+      </html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  };
+
+  const handleDeletePayment = async (payment: any) => {
+    if (!payment?.id) return;
+
+    const paymentId = payment.id;
+    setDeletingPaymentId(paymentId);
+    setSoftDeletedPaymentIds((prev) =>
+      prev.includes(paymentId) ? prev : [...prev, paymentId],
+    );
+
+    const timer = window.setTimeout(async () => {
+      pendingDeleteTimers.current.delete(paymentId);
+      try {
+        const deleted = await deletePaymentApi(paymentId);
+        if (deleted) {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("paymentsUpdated"));
+          }
+          toast.success("Payment deleted", {
+            description: "The payment record was removed permanently.",
+          });
+        } else {
+          setSoftDeletedPaymentIds((prev) =>
+            prev.filter((id) => id !== paymentId),
+          );
+          toast.error("Unable to delete payment", {
+            description: "The payment could not be deleted right now.",
+          });
+        }
+      } catch (error) {
+        console.error("Failed to delete payment", error);
+        setSoftDeletedPaymentIds((prev) =>
+          prev.filter((id) => id !== paymentId),
+        );
+        toast.error("Unable to delete payment", {
+          description: "The payment could not be deleted right now.",
+        });
+      } finally {
+        setDeletingPaymentId(null);
+      }
+    }, 6000);
+
+    pendingDeleteTimers.current.set(paymentId, timer);
+
+    toast.success("Payment deleted", {
+      description: "The payment was removed from the list. Undo to restore it.",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const existingTimer = pendingDeleteTimers.current.get(paymentId);
+          if (existingTimer) {
+            window.clearTimeout(existingTimer);
+            pendingDeleteTimers.current.delete(paymentId);
+          }
+          setSoftDeletedPaymentIds((prev) =>
+            prev.filter((id) => id !== paymentId),
+          );
+          setDeletingPaymentId(null);
+          toast.success("Payment restored", {
+            description: "The payment is back on the list.",
+          });
+        },
+      },
+      duration: 6000,
+    });
+  };
+
   const refreshTransactions = () => {
     refetchAll();
-    setTransactions(expenses);
   };
   const refreshPayments = () => {
     refetchAll();
@@ -746,54 +1126,192 @@ export default function FinancesPage() {
             </DialogDescription>
           </DialogHeader>
 
-          {selectedTx && !isEditingTx && (
-            <div className="space-y-2">
-              {selectedTx.transID && (
+          {selectedTx &&
+            !isEditingTx &&
+            (selectedTx.type === "expense" ? (
+              <div className="space-y-2">
+                {selectedTx.transID && (
+                  <p>
+                    <strong>Trans ID:</strong> {selectedTx.transID}
+                  </p>
+                )}
                 <p>
-                  <strong>Trans ID:</strong> {selectedTx.transID}
+                  <strong>Type:</strong> {selectedTx.type}
                 </p>
-              )}
-              <p>
-                <strong>Type:</strong> {selectedTx.type}
-              </p>
-              <p>
-                <strong>Amount:</strong>{" "}
-                {formatCurrency(selectedTx.amount, activeCurrency)}
-              </p>
-              <p>
-                <strong>Status:</strong> {selectedTx.status}
-              </p>
-              <p>
-                <strong>Date:</strong>{" "}
-                {new Date(selectedTx.date).toLocaleString()}
-              </p>
-              <p>
-                <strong>Property:</strong> {selectedTx.propertyName || "N/A"}
-              </p>
-              <p>
-                <strong>Tenant:</strong> {selectedTx.tenantName || "N/A"}
-              </p>
-              <p>
-                <strong>Description:</strong> {selectedTx.notes || "—"}
-              </p>
-              {selectedTx.receiptReference && (
                 <p>
-                  <strong>Receipt/Invoice Reference:</strong>{" "}
-                  {selectedTx.receiptReference}
+                  <strong>Amount:</strong>{" "}
+                  {formatCurrency(selectedTx.amount, activeCurrency)}
                 </p>
-              )}
-              {selectedTx.category && (
                 <p>
-                  <strong>Category:</strong> {selectedTx.category}
+                  <strong>Status:</strong> {selectedTx.status}
                 </p>
-              )}
-              {selectedTx.paymentMethod && (
                 <p>
-                  <strong>Payment Method:</strong> {selectedTx.paymentMethod}
+                  <strong>Date:</strong>{" "}
+                  {new Date(selectedTx.date).toLocaleString()}
                 </p>
-              )}
-            </div>
-          )}
+                <p>
+                  <strong>Property:</strong> {selectedTx.propertyName || "N/A"}
+                </p>
+                <p>
+                  <strong>Tenant:</strong> {selectedTx.tenantName || "N/A"}
+                </p>
+                <p>
+                  <strong>Description:</strong> {selectedTx.notes || "—"}
+                </p>
+                {selectedTx.receiptReference && (
+                  <p>
+                    <strong>Receipt/Invoice Reference:</strong>{" "}
+                    {selectedTx.receiptReference}
+                  </p>
+                )}
+                {selectedTx.category && (
+                  <p>
+                    <strong>Category:</strong> {selectedTx.category}
+                  </p>
+                )}
+                {selectedTx.paymentMethod && (
+                  <p>
+                    <strong>Payment Method:</strong> {selectedTx.paymentMethod}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-border bg-gradient-to-br from-primary/10 via-background to-background p-5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-4">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Receipt
+                    </p>
+                    <h3 className="text-xl font-semibold text-foreground">
+                      Aurex Property Manager
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Rent payment confirmation
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Receipt No.
+                    </p>
+                    <p className="font-semibold text-foreground">
+                      {selectedTx.txdId || selectedTx.id}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedTx.paidOn ||
+                      selectedTx.paymentDate ||
+                      selectedTx.date
+                        ? new Date(
+                            selectedTx.paidOn ||
+                              selectedTx.paymentDate ||
+                              selectedTx.date,
+                          ).toLocaleDateString()
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+                  <div className="rounded-xl border border-border bg-background/80 p-4">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Amount Paid
+                    </p>
+                    <p className="mt-2 text-3xl font-semibold text-foreground">
+                      {formatCurrency(selectedTx.amount, activeCurrency)}
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-sm font-medium text-emerald-600">
+                        {String(selectedTx.status || "complete").toUpperCase()}
+                      </span>
+                      <span className="text-sm text-muted-foreground">
+                        Paid via {selectedTx.paymentMethod || "manual"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-border bg-background/80 p-4">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Balance
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-foreground">
+                      {formatCurrency(
+                        Number(
+                          selectedTx.balanceAfterPayment ??
+                            selectedTx.balance ??
+                            0,
+                        ),
+                        activeCurrency,
+                      )}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Previous balance:{" "}
+                      {formatCurrency(
+                        Number(selectedTx.priorBalance ?? 0),
+                        activeCurrency,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Tenant
+                    </p>
+                    <p className="mt-1 font-semibold text-foreground">
+                      {selectedTx.tenantName || "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Property
+                    </p>
+                    <p className="mt-1 font-semibold text-foreground">
+                      {selectedTx.propertyName || "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Payer
+                    </p>
+                    <p className="mt-1 font-semibold text-foreground">
+                      {selectedTx.paidBy || "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Date
+                    </p>
+                    <p className="mt-1 font-semibold text-foreground">
+                      {selectedTx.paidOn ||
+                      selectedTx.paymentDate ||
+                      selectedTx.date
+                        ? new Date(
+                            selectedTx.paidOn ||
+                              selectedTx.paymentDate ||
+                              selectedTx.date,
+                          ).toLocaleString()
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-lg border border-border/70 bg-background/70 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    Reason for payment
+                  </p>
+                  <p className="mt-1 font-semibold text-foreground">
+                    {selectedTx.reasonForPayment || selectedTx.notes || "—"}
+                  </p>
+                </div>
+                <div className="mt-5 rounded-lg border border-border/70 bg-background/70 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    Notes / Description
+                  </p>
+                  <p className="mt-1 font-semibold text-foreground">
+                    {selectedTx.notes || "—"}
+                  </p>
+                </div>
+              </div>
+            ))}
 
           {selectedTx && isEditingTx && (
             <form
@@ -963,24 +1481,22 @@ export default function FinancesPage() {
             {!isEditingTx && (
               <div className="flex justify-end gap-2">
                 <Button
-                  variant="destructive"
-                  onClick={async () => {
-                    if (!selectedTx) return;
-                    try {
-                      if (selectedTx.type === "expense") {
-                        await deleteExpenseApi(selectedTx.id);
-                      } else {
-                        deleteTransaction(selectedTx.id);
-                      }
-                    } catch (err) {
-                      console.error("Failed to delete transaction", err);
-                    }
-                    await refreshTransactions();
-                    setIsTxDialogOpen(false);
-                  }}
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsTxDialogOpen(false)}
                 >
-                  Delete
+                  Close
                 </Button>
+                {selectedTx && selectedTx.type !== "expense" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handlePrintPaymentReceipt(selectedTx)}
+                  >
+                    <Printer className="mr-2 h-4 w-4" />
+                    Print Receipt
+                  </Button>
+                )}
                 <Button onClick={() => setIsEditingTx(true)}>Edit</Button>
               </div>
             )}
@@ -1148,28 +1664,35 @@ export default function FinancesPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleRowClick(payment)}>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          handleRowClick(payment);
+                          console.log(
+                            "View details clicked for payment:",
+                            payment,
+                          );
+                        }}
+                      >
                         <Eye className="mr-2 h-4 w-4" />
                         View details
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        onClick={async () => {
-                          try {
-                            const deleted = await deletePaymentApi(payment.id);
-                            if (deleted) {
-                              refreshPayments();
-                              if (typeof window !== "undefined")
-                                window.dispatchEvent(
-                                  new CustomEvent("paymentsUpdated"),
-                                );
-                            }
-                          } catch (e) {
-                            console.error("Failed to delete payment", e);
-                          }
-                        }}
+                        disabled={deletingPaymentId === payment.id}
+                        onClick={() => handleDeletePayment(payment)}
+                        className="text-destructive hover:bg-red-300"
                       >
-                        <FileText className="mr-2 h-4 w-4" />
-                        Delete
+                        {deletingPaymentId === payment.id ? (
+                          <>
+                            Deleting...{" "}
+                            <Loader className="mr-2 h-4 w-4 animate-spin" />
+                          </>
+                        ) : (
+                          <>
+                            {" "}
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </>
+                        )}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {
@@ -1187,28 +1710,10 @@ export default function FinancesPage() {
                         Print
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        onClick={async () => {
-                          try {
-                            const text = `Payment ${payment.transId || payment.id}: ${formatCurrency(payment.amount || 0, activeCurrency)}`;
-                            if (navigator.share) {
-                              await navigator.share({
-                                title: "Payment",
-                                text,
-                                url: window.location.href,
-                              });
-                            } else if (navigator.clipboard) {
-                              await navigator.clipboard.writeText(text);
-                              alert("Payment details copied to clipboard");
-                            } else {
-                              alert(text);
-                            }
-                          } catch (e) {
-                            console.error("Share failed", e);
-                          }
-                        }}
+                        onClick={() => handleDownloadPaymentReceipt(payment)}
                       >
-                        <Share2 className="mr-2 h-4 w-4" />
-                        Share
+                        <Download className="mr-2 h-4 w-4" />
+                        Download receipt PDF
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

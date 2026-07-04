@@ -1366,16 +1366,18 @@ export default function SettingsPage() {
 
           {/* Finance Tab (placeholder) */}
           <TabsContent value="finance" className="p-6 space-y-6">
-            <div>
-              <h3 className="text-lg font-bold text-foreground mb-4">
-                Finance Settings
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                Currency and payment method configuration.
-              </p>
-            </div>
-            <div className="space-y-4">
+            {/* <div className="flex flex-col gap-4">
               <div>
+                <h3 className="text-lg font-bold text-foreground mb-4">
+                  Finance Settings
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Currency configuration.
+                </p>
+              </div>
+            </div> */}
+            <div className="space-y-4">
+              {/* <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
                   Default Currency
                 </label>
@@ -1468,7 +1470,7 @@ export default function SettingsPage() {
                     />
                   </div>
                 </div>
-              </div>
+              </div> */}
               {/* payment methods section */}
               <div>
                 <label className="block text-sm font-medium text-foreground mb-4">

@@ -16,6 +16,9 @@ function dispatchPaymentsUpdatedEvent() {
   }
 }
 
+const isMpesaGatewayDisabled =
+  process.env.NEXT_PUBLIC_DISABLE_MPESA_GATEWAY === "true";
+
 function normalizePaymentAmount(value: unknown) {
   const num = Number(value ?? 0);
   return Number.isFinite(num) ? num : 0;
@@ -130,6 +133,12 @@ export async function createManualPayment(
   payload: Partial<RentPayment>,
 ): Promise<RentPayment | null> {
   try {
+    // Debug: log the outgoing payload so we can verify balance fields
+    try {
+      console.log("[createManualPayment] outgoing payload:", payload);
+    } catch (e) {
+      // ignore logging errors in older browsers
+    }
     const res = await apiRequest("POST", "/payments/create", payload);
     const data = await res.json();
     const raw = data?.data || data?.payment || data || null;
@@ -179,6 +188,23 @@ export async function createMpesaPayment(
   payload: Partial<RentPayment> & { phoneNumber: string },
 ): Promise<RentPayment | null> {
   try {
+    if (isMpesaGatewayDisabled) {
+      console.warn(
+        "[Payment Service] M-Pesa gateway disabled via NEXT_PUBLIC_DISABLE_MPESA_GATEWAY; saving payment locally.",
+      );
+      return await createManualPayment({
+        ...payload,
+        paymentMethod: "mpesa",
+        notes:
+          `${payload.notes || ""}`.trim() +
+          " (M-Pesa gateway disabled; payment saved locally)",
+      });
+    }
+
+    // Debug: log the outgoing payload for initiate calls
+    try {
+      console.log("[createMpesaPayment] initiate payload:", payload);
+    } catch (_) {}
     const res = await apiRequest("POST", "/payments/mpesa/initiate", payload);
     const json = await res.json();
     const raw = json?.data || json?.payment || json || null;
@@ -290,8 +316,8 @@ export async function getAllPayments(
 
 export async function deletePaymentApi(id: string): Promise<boolean> {
   try {
-    await apiRequest("DELETE", `/payments?id=${encodeURIComponent(id)}`);
-    dispatchPaymentsUpdatedEvent();
+    await apiRequest("DELETE", `/payments/${id}/delete`);
+    // dispatchPaymentsUpdatedEvent();
     return true;
   } catch (err) {
     console.warn(`Failed to delete payment ${id}:`, err);
@@ -525,6 +551,8 @@ export async function listPaymentsApi(
         amount: Number(p.amount || 0),
         currency: p.currency || "USD",
         paidOn: p.paidOn || p.date || new Date().toISOString(),
+        status: p.status || "complete",
+        paymentMethod: p.paymentMethod || "manual",
       })) as RentPayment[];
     } catch (e) {
       return [];
@@ -629,6 +657,8 @@ export async function getPaymentsForProperty(
           amount: Number(p.amount || 0),
           currency: p.currency || "USD",
           paidOn: p.paidOn || p.date || new Date().toISOString(),
+          status: p.status || "complete",
+          paymentMethod: p.paymentMethod || "manual",
         })) as RentPayment[];
     } catch (e) {
       return [];

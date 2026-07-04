@@ -29,11 +29,18 @@ interface UnitSpecification {
   value: string;
 }
 
+interface UnitImage {
+  name: string;
+  url: string;
+  public_id: string;
+}
+
 interface PropertyUnit {
   unitNumber: string;
   rent: number;
   unitType: string;
   specifications: UnitSpecification[];
+  images: UnitImage[];
 }
 
 interface PropertyFormData {
@@ -196,6 +203,7 @@ export default function PropertyFormDialog({
                       rent: initialData.price_per_unit ?? 0,
                       unitType: "",
                       specifications: [],
+                      images: [],
                     }
                   : {
                       unitNumber: unit.unitNumber || unit.unit || "",
@@ -206,6 +214,7 @@ export default function PropertyFormDialog({
                         0,
                       unitType: unit.unitType || unit.type || "",
                       specifications: unit.specifications || [],
+                      images: Array.isArray(unit.images) ? unit.images : [],
                     },
               )
             : [],
@@ -439,6 +448,7 @@ export default function PropertyFormDialog({
           rent: 0,
           unitType: "",
           specifications: [],
+          images: [],
         },
       ],
     }));

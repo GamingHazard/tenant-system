@@ -192,7 +192,6 @@ export interface FeatureToggles {
 
 export interface FinanceSettings {
   currency: string;
-  exchangeRates: Record<string, number>;
   paymentMethods: PaymentMethod[];
 }
 
@@ -307,12 +306,6 @@ const defaultTenantPortalSettings: TenantPortalSettings = {
   },
   financeSettings: {
     currency: "USD",
-    exchangeRates: {
-      USD: 1,
-      EUR: 0.92,
-      GBP: 0.79,
-      KES: 140,
-    },
     paymentMethods: [
       { type: "credit_card", enabled: false, processingFee: 2.9 },
       { type: "bank_transfer", enabled: false, processingFee: 0.5 },
@@ -371,9 +364,6 @@ function ensureTenantPortalSettings(settings: SystemSettings): SystemSettings {
     financeSettings: {
       ...defaultTenantPortalSettings.financeSettings,
       ...existing.financeSettings,
-      exchangeRates:
-        existing.financeSettings?.exchangeRates ||
-        defaultTenantPortalSettings.financeSettings.exchangeRates,
       paymentMethods:
         existing.financeSettings?.paymentMethods ||
         defaultTenantPortalSettings.financeSettings.paymentMethods,
@@ -960,7 +950,6 @@ export interface SettingsPayload {
       country?: string;
       symbol?: string;
     };
-    exchangeRates?: Record<string, number>;
     paymentMethods?: AdminPaymentMethod[];
   };
   notifications?: {
@@ -1074,7 +1063,6 @@ export function convertToSettingsPayload(
       currency: {
         code: settings.financeSettings?.currency || "USD",
       },
-      exchangeRates: settings.financeSettings?.exchangeRates,
       paymentMethods: settings.financeSettings?.paymentMethods?.map(
         formatPaymentMethodForPayload,
       ),
@@ -1192,12 +1180,6 @@ export function convertPayloadToTenantPortalSettings(
     },
     financeSettings: {
       currency: payload.finance?.currency?.code || "USD",
-      exchangeRates: payload.finance?.exchangeRates || {
-        USD: 1,
-        EUR: 0.92,
-        GBP: 0.79,
-        KES: 140,
-      },
       paymentMethods: payload.finance?.paymentMethods || [],
     },
   };
