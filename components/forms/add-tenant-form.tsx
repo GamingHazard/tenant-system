@@ -8,6 +8,7 @@ interface AddTenantFormProps {
   onClose: () => void;
   onSubmit?: (data: any) => void;
   isLoading?: boolean;
+  errorMessage?: string | null;
 }
 
 export default function AddTenantForm({
@@ -15,6 +16,7 @@ export default function AddTenantForm({
   onClose,
   onSubmit,
   isLoading = false,
+  errorMessage = null,
 }: AddTenantFormProps) {
   if (!isOpen) return null;
 
@@ -27,6 +29,7 @@ export default function AddTenantForm({
       onSubmit={(formData) => {
         onSubmit?.(formData);
       }}
+      errorMessage={errorMessage}
     />
   );
 }

@@ -45,7 +45,6 @@ import {
 import {
   getNotifications,
   deleteNotification,
-  getUnreadCount,
 } from "@/lib/services/notifications";
 import {
   fetchNotifications,
@@ -128,6 +127,26 @@ export default function DashboardLayout({
   const { settings } = useSettings();
   const { tenants: allTenants, expenses, maintenanceRequests } = useAppData();
 
+  React.useEffect(() => {
+    const pendingMaintenance = maintenanceRequests.filter(
+      (req) => req.status === "pending",
+    ).length;
+    setPendingMaintenanceCount(pendingMaintenance);
+
+    const pendingTenants = allTenants.filter(
+      (t) =>
+        t.status === "pending" ||
+        t.status === undefined ||
+        t.status === "awaiting",
+    ).length;
+    setPendingApprovalsCount(pendingTenants);
+
+    const pendingExpenses = expenses.filter(
+      (ex) => ex.status === "pending",
+    ).length;
+    setPendingExpensesCount(pendingExpenses);
+  }, [allTenants, expenses, maintenanceRequests]);
+
   // Read timeout minutes from settings (stored as minutes).
   // Disable the timer entirely when auto logout is turned off.
   const autoLogoutEnabled = settings?.security?.autoLogout?.enabled;
@@ -203,8 +222,12 @@ export default function DashboardLayout({
     ).length;
     setPendingMaintenanceCount(pendingMaintenance);
 
-    // Messages unread count from notifications service
-    setUnreadMessagesCount(getUnreadCount());
+    setUnreadMessagesCount(
+      notifications.filter(
+        (notification) =>
+          !notification.read && notification.resourceType === "message",
+      ).length,
+    );
 
     // Pending tenant approvals
     try {

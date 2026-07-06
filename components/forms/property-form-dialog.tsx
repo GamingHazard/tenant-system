@@ -91,6 +91,7 @@ interface PropertyFormDialogProps {
   onClose: () => void;
   onSubmit?: (data: PropertyFormData, file?: File | null) => void;
   isLoading?: boolean;
+  errorMessage?: string | null;
   initialData?: Partial<PropertyFormData>;
 }
 
@@ -155,6 +156,7 @@ export default function PropertyFormDialog({
   onClose,
   onSubmit,
   isLoading = false,
+  errorMessage = null,
   initialData,
 }: PropertyFormDialogProps) {
   const [formData, setFormData] =
@@ -579,6 +581,11 @@ export default function PropertyFormDialog({
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
+            {errorMessage ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                <p>{errorMessage}</p>
+              </div>
+            ) : null}
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
                 <div className="flex items-center gap-2 mb-2">

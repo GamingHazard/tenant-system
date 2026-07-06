@@ -30,6 +30,7 @@ import {
   PropertyReference,
   UserReference,
 } from "@/lib/services/messages";
+import { markMessageNotificationRead } from "@/lib/services/notifications";
 import {
   createAnnouncementApi,
   getAnnouncementsByProperty,
@@ -416,6 +417,14 @@ export default function CommunicationsPage() {
             )
           : [...prev, updated];
       });
+
+      await markMessageNotificationRead(messageId, token);
+      if (
+        typeof window !== "undefined" &&
+        (window as any).refreshNotifications
+      ) {
+        await (window as any).refreshNotifications();
+      }
     } catch (e) {
       console.error("Failed to mark as seen:", e);
     }
@@ -944,6 +953,12 @@ export default function CommunicationsPage() {
                           const recipientId = getUserRefId(msg.toUserId);
 
                           const isFromCurrentUser = fromUserId === user?.id;
+                          const isMessageRead = Array.isArray(msg.seenBy)
+                            ? msg.seenBy
+                                .map((entry: any) => getUserRefId(entry))
+                                .filter(Boolean)
+                                .includes(user?.id || "")
+                            : false;
 
                           return (
                             <div
@@ -954,8 +969,17 @@ export default function CommunicationsPage() {
                                   : "hover:bg-muted/20"
                               }`}
                               onClick={() => {
-                                setSelectedMessageId(msg._id || msg.id || null);
+                                const messageId = msg._id || msg.id || "";
+                                setSelectedMessageId(messageId || null);
                                 setIsDetailsDialogOpen(true);
+
+                                if (
+                                  recipientId === user?.id &&
+                                  !isMessageRead &&
+                                  messageId
+                                ) {
+                                  void handleMarkSeen(messageId);
+                                }
                               }}
                             >
                               <p className="text-sm text-muted-foreground whitespace-pre-wrap">

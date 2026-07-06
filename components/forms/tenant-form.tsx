@@ -53,6 +53,9 @@ interface TenantFormData {
   businessContacts: string;
   financialInfo: string;
   securityDeposit: string;
+  policyGivenTitle: string;
+  policyGivenBody: string;
+  policyExceptions: string;
 }
 
 interface TenantFormProps {
@@ -62,7 +65,58 @@ interface TenantFormProps {
   onClose: () => void;
   onSubmit?: (data: TenantFormData) => void;
   isLoading?: boolean;
+  errorMessage?: string | null;
 }
+
+const createEmptyTenantFormData = (): TenantFormData => ({
+  name: "",
+  email: "",
+  phone: "",
+  tenantType: "residential",
+  propertyId: "",
+  unitNumber: "",
+  leaseStartDate: "",
+  leaseEndDate: "",
+  leaseType: "monthly",
+  leaseTerms: "",
+  preferredContactMethod: "email",
+  applicationDate: "",
+  moveInDate: "",
+  password: "",
+  preferredName: "",
+  middleName: "",
+  gender: "male",
+  maritalStatus: "single",
+  nationality: "",
+  placeOfOrigin: "",
+  hasFamily: "yes",
+  householdMembers: "",
+  cohabitantName: "",
+  cohabitantRelationship: "",
+  occupation: "",
+  employerName: "",
+  position: "",
+  nextOfKinName: "",
+  nextOfKinRelationship: "",
+  nextOfKinPhone: "",
+  nextOfKinEmail: "",
+  monthlyRent: 0,
+  emergencyContact: "",
+  notes: "",
+  dateOfBirth: "",
+  employmentInfo: "",
+  previousAddresses: "",
+  coSigner: "",
+  pets: "",
+  vehicles: "",
+  businessInfo: "",
+  businessContacts: "",
+  financialInfo: "",
+  securityDeposit: "",
+  policyGivenTitle: "",
+  policyGivenBody: "",
+  policyExceptions: "",
+});
 
 export default function TenantForm({
   mode,
@@ -71,53 +125,12 @@ export default function TenantForm({
   onClose,
   onSubmit,
   isLoading = false,
+  errorMessage = null,
 }: TenantFormProps) {
-  const [formData, setFormData] = useState<TenantFormData>({
-    name: "",
-    email: "",
-    phone: "",
-    tenantType: "residential",
-    propertyId: "",
-    unitNumber: "",
-    leaseStartDate: "",
-    leaseEndDate: "",
-    leaseType: "monthly",
-    leaseTerms: "",
-    preferredContactMethod: "email",
-    applicationDate: "",
-    moveInDate: "",
-    password: "",
-    preferredName: "",
-    middleName: "",
-    gender: "male",
-    maritalStatus: "single",
-    nationality: "",
-    placeOfOrigin: "",
-    hasFamily: "yes",
-    householdMembers: "",
-    cohabitantName: "",
-    cohabitantRelationship: "",
-    occupation: "",
-    employerName: "",
-    position: "",
-    nextOfKinName: "",
-    nextOfKinRelationship: "",
-    nextOfKinPhone: "",
-    nextOfKinEmail: "",
-    monthlyRent: 0,
-    emergencyContact: "",
-    notes: "",
-    dateOfBirth: "",
-    employmentInfo: "",
-    previousAddresses: "",
-    coSigner: "",
-    pets: "",
-    vehicles: "",
-    businessInfo: "",
-    businessContacts: "",
-    financialInfo: "",
-    securityDeposit: "",
-  });
+  const [formData, setFormData] = useState<TenantFormData>(
+    createEmptyTenantFormData(),
+  );
+  const [formError, setFormError] = useState<string | null>(null);
 
   const { properties, tenants } = useAppData();
 
@@ -159,8 +172,10 @@ export default function TenantForm({
 
   useEffect(() => {
     if (isOpen && !prevIsOpenRef.current) {
+      setFormError(null);
       if (mode === "edit" && initialData) {
         setFormData({
+          ...createEmptyTenantFormData(),
           name: initialData.name || "",
           email: initialData.email || "",
           phone: initialData.phone || "",
@@ -209,44 +224,10 @@ export default function TenantForm({
           businessInfo: initialData.businessInfo || "",
           businessContacts: initialData.businessContacts || "",
           financialInfo: initialData.financialInfo || "",
-          policyGivenTitle: initialData.policyGiven?.title || "",
-          policyGivenBody: initialData.policyGiven?.body || "",
-          policyExceptions: initialData.policyExceptions || "",
           securityDeposit: initialData.securityDeposit || "",
         });
       } else if (mode === "create") {
-        setFormData({
-          name: "",
-          email: "",
-          phone: "",
-          tenantType: "residential",
-          propertyId: "",
-          unitNumber: "",
-          leaseStartDate: "",
-          leaseEndDate: "",
-          leaseType: "monthly",
-          leaseTerms: "",
-          preferredContactMethod: "email",
-          applicationDate: "",
-          moveInDate: "",
-          password: "",
-          monthlyRent: 0,
-          emergencyContact: "",
-          notes: "",
-          dateOfBirth: "",
-          employmentInfo: "",
-          previousAddresses: "",
-          coSigner: "",
-          pets: "",
-          vehicles: "",
-          businessInfo: "",
-          businessContacts: "",
-          financialInfo: "",
-          policyGivenTitle: "",
-          policyGivenBody: "",
-          policyExceptions: "",
-          securityDeposit: "",
-        });
+        setFormData(createEmptyTenantFormData());
       }
     }
     prevIsOpenRef.current = isOpen;
@@ -317,8 +298,46 @@ export default function TenantForm({
     }
   }, [formData.leaseStartDate, formData.leaseType]);
 
+  const getAgeFromDob = (dob: string) => {
+    if (!dob) return null;
+    const birthDate = new Date(dob);
+    if (Number.isNaN(birthDate.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    const dayDiff = today.getDate() - birthDate.getDate();
+    if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+      age -= 1;
+    }
+    return age;
+  };
+
+  const getDobMaxValue = () => {
+    const today = new Date();
+    today.setFullYear(today.getFullYear() - 18);
+    return today.toISOString().slice(0, 10);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
+    if (!formData.dateOfBirth) {
+      setFormError("Date of birth is required.");
+      return;
+    }
+
+    const age = getAgeFromDob(formData.dateOfBirth);
+    if (age === null) {
+      setFormError("Date of birth is invalid.");
+      return;
+    }
+
+    if (age < 18) {
+      setFormError("Tenant must be at least 18 years old.");
+      return;
+    }
+
     const sanitizedData = {
       ...formData,
       monthlyRent:
@@ -335,55 +354,6 @@ export default function TenantForm({
     if (formData.policyExceptions)
       sanitizedData.policyExceptions = formData.policyExceptions;
     onSubmit?.(sanitizedData);
-    if (mode === "create") {
-      setFormData({
-        name: "",
-        email: "",
-        phone: "",
-        tenantType: "residential",
-        propertyId: "",
-        unitNumber: "",
-        leaseStartDate: "",
-        leaseEndDate: "",
-        leaseType: "monthly",
-        leaseTerms: "",
-        preferredContactMethod: "email",
-        applicationDate: "",
-        moveInDate: "",
-        password: "",
-        preferredName: "",
-        middleName: "",
-        gender: "male",
-        maritalStatus: "single",
-        nationality: "",
-        placeOfOrigin: "",
-        hasFamily: "yes",
-        householdMembers: "",
-        cohabitantName: "",
-        cohabitantRelationship: "",
-        occupation: "",
-        employerName: "",
-        position: "",
-        nextOfKinName: "",
-        nextOfKinRelationship: "",
-        nextOfKinPhone: "",
-        nextOfKinEmail: "",
-        monthlyRent: 0,
-        emergencyContact: "",
-        notes: "",
-        dateOfBirth: "",
-        employmentInfo: "",
-        previousAddresses: "",
-        coSigner: "",
-        pets: "",
-        vehicles: "",
-        businessInfo: "",
-        businessContacts: "",
-        financialInfo: "",
-        securityDeposit: "",
-      });
-      onClose();
-    }
   };
 
   const selectedProperty = availableProperties.find(
@@ -391,9 +361,26 @@ export default function TenantForm({
   );
 
   const unitOptions = selectedProperty?.availableUnits ?? [];
-  const unitSelectOptions = formData.unitNumber
-    ? Array.from(new Set([formData.unitNumber, ...unitOptions]))
-    : unitOptions;
+  const normalizedUnitOptions = useMemo(() => {
+    const values = Array.isArray(unitOptions) ? unitOptions : [];
+    const distinctValues = Array.from(
+      new Set(
+        values
+          .map((unit) => {
+            if (typeof unit === "string") return unit;
+            if (unit && typeof unit === "object") {
+              return (unit as any).unitNumber || (unit as any).unit || "";
+            }
+            return "";
+          })
+          .filter(Boolean),
+      ),
+    );
+
+    if (!formData.unitNumber) return distinctValues;
+
+    return Array.from(new Set([formData.unitNumber, ...distinctValues]));
+  }, [formData.unitNumber, unitOptions]);
 
   if (!isOpen) return null;
 
@@ -808,9 +795,9 @@ export default function TenantForm({
                   >
                     <option value="">Select Unit</option>
                     {formData.propertyId &&
-                      (unitSelectOptions.length ? (
-                        unitSelectOptions.map((unit) => (
-                          <option key={unit} value={unit}>
+                      (normalizedUnitOptions.length ? (
+                        normalizedUnitOptions.map((unit, index) => (
+                          <option key={`${unit}-${index}`} value={unit}>
                             {unit}
                           </option>
                         ))
@@ -1236,6 +1223,12 @@ export default function TenantForm({
                 />
               </div>
             </section>
+
+            {(formError || errorMessage) && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                <p>{formError || errorMessage}</p>
+              </div>
+            )}
 
             {/* Form Actions */}
             <div className="flex justify-end gap-3 pt-4 border-t border-border">

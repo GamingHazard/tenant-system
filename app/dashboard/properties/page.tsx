@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { getErrorMessage } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,8 +42,15 @@ export default function PropertiesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [isCreatingProperty, setIsCreatingProperty] = useState(false);
+  const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (showAddForm) {
+      setCreateFormError(null);
+    }
+  }, [showAddForm]);
   const activeCurrency = useActiveCurrency();
   const { user, token } = useAuth();
   const { properties, isInitialDataLoading } = useAppData();
@@ -188,6 +196,7 @@ export default function PropertiesPage() {
 
   const handleAddProperty = async (data: any, file?: File | null) => {
     setIsCreatingProperty(true);
+    setCreateFormError(null);
     try {
       const typeSpecs = getSpecificationsForType(
         data.propertyType || "apartment",
@@ -306,7 +315,9 @@ export default function PropertiesPage() {
       });
       setShowAddForm(false);
     } catch (e) {
-      console.error("Create property failed", e);
+      const errorMessage = getErrorMessage(e, "Failed to create property");
+      setCreateFormError(errorMessage);
+      console.error("Create property failed", errorMessage);
     } finally {
       setIsCreatingProperty(false);
     }
@@ -320,6 +331,7 @@ export default function PropertiesPage() {
         onClose={() => setShowAddForm(false)}
         onSubmit={handleAddProperty}
         isLoading={isCreatingProperty}
+        errorMessage={createFormError}
       />
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -449,18 +461,22 @@ export default function PropertiesPage() {
                         )}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground flex items-center gap-2">
-                        <DollarSign className="w-4 h-4" />
-                        Amount per Unit
-                      </span>
-                      <span className="font-semibold text-foreground">
-                        {formatCurrency(
-                          property.price_per_unit,
-                          activeCurrency,
-                        )}
-                      </span>
-                    </div>
+                    {property.units && property.units.length > 0 ? (
+                      ""
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground flex items-center gap-2">
+                          <DollarSign className="w-4 h-4" />
+                          Amount per Unit
+                        </span>
+                        <span className="font-semibold text-foreground">
+                          {formatCurrency(
+                            property.price_per_unit,
+                            activeCurrency,
+                          )}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground flex items-center gap-2">
                         <Users className="w-4 h-4" />

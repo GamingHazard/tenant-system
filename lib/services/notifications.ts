@@ -111,6 +111,48 @@ export async function markAsRead(notificationId: string): Promise<void> {
   });
 }
 
+export async function markMessageNotificationRead(
+  messageId: string,
+  token?: string | null,
+): Promise<void> {
+  if (!messageId) return;
+
+  try {
+    const notifications = getNotifications();
+    const match = notifications.find(
+      (notification) =>
+        notification.resourceType === "message" &&
+        notification.resourceId === messageId &&
+        !notification.read,
+    );
+
+    if (match) {
+      await markAsRead(match.id);
+      return;
+    }
+
+    // Attempt to mark the server notification read by matching resourceType/resourceId.
+    const serverNotifications = await fetchNotificationsFromServer(
+      undefined,
+      undefined,
+      undefined,
+      token,
+    );
+    const serverMatch = serverNotifications.find(
+      (notification) =>
+        notification.resourceType === "message" &&
+        notification.resourceId === messageId &&
+        !notification.read,
+    );
+
+    if (serverMatch) {
+      await markNotificationReadOnServer(serverMatch.id, token);
+    }
+  } catch (error) {
+    console.error("Failed to mark message notification read", error);
+  }
+}
+
 export async function hideNotification(
   notificationId: string,
   tenantId: string,

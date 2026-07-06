@@ -14,6 +14,7 @@ import {
   TENANT_LIST_FIELDS,
   TenantRecord,
 } from "@/lib/services/tenants";
+import { getErrorMessage } from "@/lib/utils";
 import { useAppData } from "@/lib/data-context";
 import { queryClient } from "@/lib/query-client";
 import {
@@ -66,6 +67,9 @@ export default function TenantsPage() {
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [isCreatingTenant, setIsCreatingTenant] = useState(false);
+  const [createTenantError, setCreateTenantError] = useState<string | null>(
+    null,
+  );
 
   const { tenants, properties, isLoading, isFetching } = useAppData();
   const isPageLoading = isLoading || (isFetching && tenants.length === 0);
@@ -324,6 +328,7 @@ export default function TenantsPage() {
   };
 
   const handleAddTenant = async (data: any) => {
+    setCreateTenantError(null);
     setIsCreatingTenant(true);
     try {
       const payload: Partial<TenantRecord> = {
@@ -388,7 +393,9 @@ export default function TenantsPage() {
       console.log("New tenant created:", tenant);
       setShowAddForm(false);
     } catch (error) {
-      console.error("Failed to create tenant:", error);
+      const message = getErrorMessage(error, "Failed to create tenant");
+      setCreateTenantError(message);
+      console.error("Failed to create tenant:", message);
     } finally {
       setIsCreatingTenant(false);
     }
@@ -398,9 +405,13 @@ export default function TenantsPage() {
     <div className="space-y-6">
       <AddTenantForm
         isOpen={showAddForm}
-        onClose={() => setShowAddForm(false)}
+        onClose={() => {
+          setShowAddForm(false);
+          setCreateTenantError(null);
+        }}
         onSubmit={handleAddTenant}
         isLoading={isCreatingTenant}
+        errorMessage={createTenantError}
       />
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

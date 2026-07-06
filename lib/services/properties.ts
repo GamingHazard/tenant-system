@@ -9,6 +9,7 @@ import {
   notifyNewProperty,
   notifyPropertyUpdated,
 } from "@/lib/services/notifications";
+import { getErrorMessage } from "@/lib/utils";
 import { listTenants, TenantRecord } from "@/lib/services/tenants";
 import { getCategoryForType } from "@/lib/constants/property-types";
 import { apiRequest, queryClient } from "../query-client";
@@ -388,6 +389,22 @@ export async function createProperty(
     payLoad,
   );
 
+  if (!res.ok) {
+    const errorText = await res.text();
+    let parsedError: unknown = errorText;
+    try {
+      parsedError = JSON.parse(errorText);
+    } catch {
+      // keep raw text if not valid JSON
+    }
+    throw new Error(
+      getErrorMessage(
+        parsedError || { message: "Failed to create property" },
+        "Failed to create property",
+      ),
+    );
+  }
+
   const data = await res.json();
 
   const newProperty = {
@@ -428,8 +445,19 @@ export async function updateProperty(
 
   const res = await apiRequest("PUT", `/property/${id}/update`, finalPatch);
   if (!res.ok) {
-    console.error("Failed to update property", await res.text());
-    return null;
+    const errorText = await res.text();
+    let parsedError: unknown = errorText;
+    try {
+      parsedError = JSON.parse(errorText);
+    } catch {
+      // keep raw text if not valid JSON
+    }
+    throw new Error(
+      getErrorMessage(
+        parsedError || { message: "Failed to update property" },
+        "Failed to update property",
+      ),
+    );
   }
 
   const updated = updateInCollection<PropertyRecord>(

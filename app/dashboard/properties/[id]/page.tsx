@@ -24,6 +24,7 @@ import {
   TenantRecord,
 } from "@/lib/services/tenants";
 import { useAppData } from "@/lib/data-context";
+import { getErrorMessage } from "@/lib/utils";
 import {
   deleteProperty,
   getPropertyById,
@@ -58,6 +59,8 @@ import {
   MapPinOff,
   MoreHorizontal,
   Eye,
+  Loader,
+  Trash2,
 } from "lucide-react";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { deleteMessageApi } from "@/lib/services/messages";
@@ -71,6 +74,7 @@ import { url } from "inspector";
 import { useAuth } from "@/lib/auth-context";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currency";
 import { useActiveCurrency } from "@/lib/hooks/use-active-currency";
+import { set } from "react-hook-form";
 
 interface SpecificationRow {
   title: string;
@@ -178,6 +182,7 @@ export default function PropertyDetailPage({
   const [isUnitImageUploadOpen, setIsUnitImageUploadOpen] = useState(false);
   const [isUnitGalleryOpen, setIsUnitGalleryOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editFormError, setEditFormError] = useState<string | null>(null);
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
@@ -186,6 +191,12 @@ export default function PropertyDetailPage({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [copied, setCopied] = useState(false);
   const [showAddTenant, setShowAddTenant] = useState(false);
+  useEffect(() => {
+    if (isEditOpen) {
+      setEditFormError(null);
+    }
+  }, [isEditOpen]);
+
   // Delete dialog state
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
@@ -228,6 +239,7 @@ export default function PropertyDetailPage({
           unit.rent ?? unit.price ?? unit.monthlyRent ?? unit.rentAmount ?? 0,
         ),
         images: Array.isArray(unit.images) ? unit.images : [],
+        name: unit.unitType || "",
       }));
   }, [property?.units, property?.detailedUnits]);
 
@@ -667,12 +679,18 @@ export default function PropertyDetailPage({
                   refreshProperty();
                   setIsEditOpen(false);
                 } catch (e) {
-                  console.error("Failed to update property", e);
+                  const errorMessage = getErrorMessage(
+                    e,
+                    "Failed to update property",
+                  );
+                  setEditFormError(errorMessage);
+                  console.error("Failed to update property", errorMessage);
                 } finally {
                   setIsUpdatingProperty(false);
                 }
               }}
               isLoading={isUpdatingProperty}
+              errorMessage={editFormError}
             />
           </div>
 
@@ -1154,7 +1172,7 @@ export default function PropertyDetailPage({
           </Dialog>
 
           <Dialog open={isUnitGalleryOpen} onOpenChange={setIsUnitGalleryOpen}>
-            <DialogContent className="max-w-3xl">
+            <DialogContent className="max-w-2xl overflow-auto">
               <DialogHeader>
                 <DialogTitle>
                   {unitGalleryTarget?.unitNumber || "Unit gallery"}
@@ -1164,36 +1182,59 @@ export default function PropertyDetailPage({
                   longer need.
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div
+                className={
+                  Array.isArray(unitGalleryTarget?.images) &&
+                  unitGalleryTarget.images.length === 1
+                    ? "grid gap-4 grid-cols-1"
+                    : "grid gap-4 md:grid-cols-2"
+                }
+              >
                 {Array.isArray(unitGalleryTarget?.images) &&
                 unitGalleryTarget.images.length > 0 ? (
                   unitGalleryTarget.images.map((image: any, index: number) => (
                     <div
                       key={`${image.public_id || index}`}
-                      className="rounded-md border border-border p-2"
+                      className={`rounded-md relative overflow-hidden w-full max-w-full h-92 ${
+                        Array.isArray(unitGalleryTarget?.images) &&
+                        unitGalleryTarget.images.length === 1
+                          ? " col-span-full md:h-96"
+                          : ""
+                      }`}
                     >
                       <img
                         src={image.url}
                         alt={image.name || `Unit image ${index + 1}`}
-                        className="h-40 w-full rounded-md object-cover"
+                        className="h-full w-full rounded-md object-cover"
                       />
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium text-foreground">
-                          {image.name || `Image ${index + 1}`}
-                        </p>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          disabled={unitImageDeletingId === image.public_id}
-                          onClick={() =>
-                            handleUnitImageDelete(unitGalleryTarget, image)
-                          }
-                        >
-                          {unitImageDeletingId === image.public_id
-                            ? "Deleting..."
-                            : "Delete"}
-                        </Button>
-                      </div>
+                      <div className="absolute inset-x-0 bottom-0 rounded-b-md bg-gradient-to-t from-black/90 via-black/45 to-transparent px-3 py-3" />
+
+                      <p className="text-sm absolute bottom-1 left-3 font-medium text-white drop-shadow-sm">
+                        {image.name || `Image ${index + 1}`}
+                      </p>
+                      <Button
+                        variant="ghost"
+                        className="absolute text-red-500 hover:bg-transparent top-1 right-1"
+                        size="sm"
+                        disabled={unitImageDeletingId === image.public_id}
+                        onClick={() => {
+                          handleUnitImageDelete(unitGalleryTarget, image);
+                          setUnitGalleryTarget((prev: any) => ({
+                            ...prev,
+                            images: prev?.images.filter(
+                              (img: any) => img.public_id !== image.public_id,
+                            ),
+                          }));
+                        }}
+                      >
+                        {unitImageDeletingId === image.public_id ? (
+                          <>
+                            <Loader className="animate-spin" />
+                          </>
+                        ) : (
+                          <Trash2 className="w-4 h-4 mr-2" />
+                        )}
+                      </Button>
                     </div>
                   ))
                 ) : (
@@ -1476,6 +1517,9 @@ export default function PropertyDetailPage({
                         <thead>
                           <tr className="border-b border-border">
                             <th className="px-4 py-3 text-left font-semibold text-foreground">
+                              Unit Type
+                            </th>
+                            <th className="px-4 py-3 text-left font-semibold text-foreground">
                               Unit
                             </th>
                             <th className="px-4 py-3 text-left font-semibold text-foreground">
@@ -1494,11 +1538,15 @@ export default function PropertyDetailPage({
                             const occupied = propertyTenants.some(
                               (tenant) => tenant.unitNumber === unit.unitNumber,
                             );
+                            // console.log("Unit occupancy check", unit);
                             return (
                               <tr
                                 key={`${unit.unitNumber}-${index}`}
                                 className="border-b border-border hover:bg-secondary"
                               >
+                                <td className="px-4 py-3 font-semibold text-foreground">
+                                  {unit.name || "N/A"}
+                                </td>
                                 <td className="px-4 py-3 font-semibold text-foreground">
                                   {unit.unitNumber}
                                 </td>
@@ -1529,7 +1577,7 @@ export default function PropertyDetailPage({
                                       }
                                     >
                                       <Eye className="mr-2 h-4 w-4" />
-                                      Gallery
+                                      Gallery ({unit.images?.length || 0})
                                     </Button>
                                   </div>
                                 </td>
