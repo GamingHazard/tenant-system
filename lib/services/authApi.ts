@@ -250,6 +250,26 @@ export async function verifyProductKey(
   return data;
 }
 
+export async function startTrial(
+  email: string,
+): Promise<{ success: boolean; message: string; data?: any }> {
+  const response = await fetch(`${API_BASE_URL}/auth/start-trial`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw createApiError(data?.error || data, "Failed to start trial");
+  }
+
+  return data;
+}
+
 /**
  * Get current user profile
  */

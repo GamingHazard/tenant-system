@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { getErrorMessage } from "@/lib/utils";
 import { signupSendCode, verifySignupCode } from "@/lib/services/authApi";
+import { useAuth } from "@/lib/auth-context";
 
 const signupSchema = z
   .object({
@@ -71,6 +72,7 @@ export default function SignupPage() {
     "form" | "verification" | "pending" | "success"
   >("form");
   const router = useRouter();
+  const { login } = useAuth();
   const {
     register,
     handleSubmit,
@@ -154,7 +156,16 @@ export default function SignupPage() {
         code: verificationCode,
       });
 
-      // After successful signup verification, require product key entry
+      // After successful signup verification, log in the new user so they can start trial or enter a key
+      const password = signupValues?.password || getValues("password") || "";
+      if (!password) {
+        throw new Error(
+          "Unable to sign in after verification. Please log in manually.",
+        );
+      }
+
+      await login(currentEmail, password);
+
       router.push(
         `/auth/product-key?email=${encodeURIComponent(currentEmail)}`,
       );

@@ -14,7 +14,6 @@ import {
   updateTenantApi,
   setTenantActiveStatusApi,
 } from "@/lib/services/tenants";
-import { getErrorMessage } from "@/lib/utils";
 import { notifyTenantProfileUpdateToAdmin } from "@/lib/services/notifications";
 import { useAppData } from "@/lib/data-context";
 import { createTransaction } from "@/app/lib/transactions-client";
@@ -94,7 +93,6 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
   // Edit form state
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isEditingTenant, setIsEditingTenant] = useState(false);
-  const [editTenantError, setEditTenantError] = useState<string | null>(null);
   const [showRecordPayment, setShowRecordPayment] = useState(false);
   const [isTogglingPortalStatus, setIsTogglingPortalStatus] = useState(false);
 
@@ -744,7 +742,9 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Position</p>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Position
+                  </p>
                   <p className="text-foreground">
                     {tenant.position || "Not provided"}
                   </p>
@@ -1052,9 +1052,7 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
               </div>
             )}
 
-            {(tenant.policyGiven?.title ||
-              tenant.policyGiven?.body ||
-              tenant.policyExceptions) && (
+            {(tenant.policyGiven?.title || tenant.policyGiven?.body || tenant.policyExceptions) && (
               <div className="space-y-4 border border-border rounded-lg p-4 bg-secondary/20">
                 <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
                   <FileText className="w-5 h-5" />
@@ -1568,13 +1566,8 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
         renewalDateHint={leaseRenewalHint}
         isOpen={isEditOpen}
         isLoading={isEditingTenant}
-        errorMessage={editTenantError}
-        onClose={() => {
-          setIsEditOpen(false);
-          setEditTenantError(null);
-        }}
+        onClose={() => setIsEditOpen(false)}
         onSubmit={async (formData) => {
-          setEditTenantError(null);
           try {
             setIsEditingTenant(true);
             const updatedTenant = {
@@ -1650,12 +1643,10 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
               }
 
               setTenant(savedTenant);
-              setIsEditOpen(false);
             }
+            setIsEditOpen(false);
           } catch (error) {
-            const message = getErrorMessage(error, "Failed to update tenant");
-            setEditTenantError(message);
-            console.error("Error updating tenant:", message);
+            console.error("Error updating tenant:", error);
           } finally {
             setIsEditingTenant(false);
           }

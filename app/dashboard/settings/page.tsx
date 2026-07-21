@@ -1377,7 +1377,7 @@ export default function SettingsPage() {
               </div>
             </div> */}
             <div className="space-y-4">
-              {/* <div>
+              <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
                   Default Currency
                 </label>
@@ -1470,7 +1470,7 @@ export default function SettingsPage() {
                     />
                   </div>
                 </div>
-              </div> */}
+              </div>
               {/* payment methods section */}
               <div>
                 <label className="block text-sm font-medium text-foreground mb-4">

@@ -3,22 +3,18 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import * as authApi from "@/lib/services/authApi";
 
-interface ProductKeyContentProps {
-  initialEmail: string;
-}
-
-export default function ProductKeyContent({
-  initialEmail,
-}: ProductKeyContentProps) {
+export default function ProductKeyContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryEmail = searchParams.get("email") || "";
 
-  const [email, setEmail] = useState(initialEmail);
+  const [email, setEmail] = useState(queryEmail);
   const [productKey, setProductKey] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +43,30 @@ export default function ProductKeyContent({
       }, 900);
     } catch (err: any) {
       setError(err?.message || "Failed to verify product key");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleStartTrial = async () => {
+    setError("");
+    setInfo("");
+
+    if (!email.trim()) {
+      setError("Please provide your email address to start the trial.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      await authApi.startTrial(email);
+      setInfo("Free trial started. Redirecting to dashboard...");
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 600);
+    } catch (err: any) {
+      setError(err?.message || "Failed to start free trial");
     } finally {
       setIsLoading(false);
     }
@@ -105,6 +125,21 @@ export default function ProductKeyContent({
               {isLoading ? "Verifying..." : "Verify Key"}
             </Button>
           </form>
+
+          <div className="mt-4 text-center">
+            <p className="text-sm text-muted-foreground mb-3">
+              Or skip activation and start your free trial.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleStartTrial}
+              disabled={isLoading}
+              className="w-full"
+            >
+              {isLoading ? "Starting trial..." : "Skip and start free trial"}
+            </Button>
+          </div>
         </Card>
       </div>
     </div>
