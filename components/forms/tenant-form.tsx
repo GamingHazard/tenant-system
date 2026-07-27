@@ -58,7 +58,7 @@ interface TenantFormData {
   policyExceptions: string;
 }
 
-interface TenantFormProps {
+export interface TenantFormProps {
   mode: "create" | "edit";
   initialData?: Partial<TenantFormData>;
   isOpen: boolean;
@@ -66,6 +66,7 @@ interface TenantFormProps {
   onSubmit?: (data: TenantFormData) => void;
   isLoading?: boolean;
   errorMessage?: string | null;
+  renewalDateHint?: string | null;
 }
 
 const createEmptyTenantFormData = (): TenantFormData => ({
@@ -126,6 +127,7 @@ export default function TenantForm({
   onSubmit,
   isLoading = false,
   errorMessage = null,
+  renewalDateHint = null,
 }: TenantFormProps) {
   const [formData, setFormData] = useState<TenantFormData>(
     createEmptyTenantFormData(),
@@ -838,6 +840,11 @@ export default function TenantForm({
                   <p className="text-xs text-muted-foreground mt-1">
                     Calculated from lease start/renewal date and lease type.
                   </p>
+                  {renewalDateHint ? (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {renewalDateHint}
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-foreground mb-2">

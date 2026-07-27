@@ -2,14 +2,14 @@
 
 "use client";
 
-import React, { useState } from "react";
+import React, { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import * as authApi from "@/lib/services/authApi";
 
-export default function ProductKeyContent() {
+function ProductKeyForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryEmail = searchParams.get("email") || "";
@@ -143,5 +143,19 @@ export default function ProductKeyContent() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function ProductKeyPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          Loading...
+        </div>
+      }
+    >
+      <ProductKeyForm />
+    </Suspense>
   );
 }

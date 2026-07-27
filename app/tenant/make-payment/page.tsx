@@ -9,10 +9,11 @@ import { useAuth } from "@/lib/auth-context";
 import { useFeatureEnabled } from "@/lib/hooks/use-tenant-portal-features";
 import {
   createManualPayment,
-  createMpesaPayment,
+  createPaystackPayment,
   getTenantOutstandingBalance,
   RentPayment,
 } from "@/lib/services/payments";
+import { openPaystackPopup } from "@/lib/services/paystack-popup";
 import { useAppData } from "@/lib/data-context";
 import { useSettings } from "@/lib/settings-context";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currency";
@@ -78,9 +79,9 @@ export default function MakePaymentPage() {
   const { settings: apiSettings } = useSettings();
   const [processing, setProcessing] = useState(false);
   const [savedPayment, setSavedPayment] = useState<RentPayment | null>(null);
-  const [polling, setPolling] = useState(false);
-  const mpesaGatewayDisabled =
-    process.env.NEXT_PUBLIC_DISABLE_MPESA_GATEWAY === "true";
+  const [paystackVerificationState, setPaystackVerificationState] = useState<
+    "idle" | "pending" | "confirmed" | "failed"
+  >("idle");
   const tenantPayments = tenant
     ? payments.filter((p) => p.tenantId === tenant.id)
     : [];
@@ -126,18 +127,11 @@ export default function MakePaymentPage() {
   const PAYMENT_METHOD_LABELS: Record<PaymentMethodType | string, string> = {
     MTN_MoMo: "MTN MoMo",
     Airtel_Money: "Airtel Money",
-    "M-Pesa": "M-Pesa",
     Orange_Money: "Orange Money",
     Visa_Mastercard: "Credit / Debit Card",
     Bank_Transfer: "Bank Transfer",
+    Paystack: "Paystack",
   };
-
-  const MOBILE_MONEY_TYPES = new Set<PaymentMethodType>([
-    "MTN_MoMo",
-    "Airtel_Money",
-    "M-Pesa",
-    "Orange_Money",
-  ]);
 
   const getPaymentMethodId = (method: AdminPaymentMethod) =>
     method._id || method.type;
@@ -149,8 +143,8 @@ export default function MakePaymentPage() {
 
   const getPaymentMethodDescription = (method: AdminPaymentMethod | null) => {
     if (!method) return "";
-    if (method.type === "M-Pesa") {
-      return "Pay with M-Pesa mobile money via STK Push.";
+    if (method.type === "Paystack") {
+      return "Pay with any payment method supported by Paystack (cards, mobile money, bank transfer, etc.)";
     }
     if (method.type === "Bank_Transfer") {
       return method.bankDetails?.bankName
@@ -159,11 +153,6 @@ export default function MakePaymentPage() {
     }
     if (method.type === "Visa_Mastercard") {
       return "Pay with Visa or Mastercard. Card checkout will be processed after confirmation.";
-    }
-    if (MOBILE_MONEY_TYPES.has(method.type as PaymentMethodType)) {
-      return method.transactionNumber
-        ? `Use mobile money account ${method.transactionNumber}.`
-        : "Pay with your mobile money wallet.";
     }
     return "Proceed with the selected payment method.";
   };
@@ -192,13 +181,19 @@ export default function MakePaymentPage() {
 
   useEffect(() => {
     if (!method && paymentMethods.length > 0) {
-      setMethod(getPaymentMethodId(paymentMethods[0]));
+      const preferredMethod =
+        paymentMethods.find((pm) => pm.type === "Paystack") ||
+        paymentMethods[0];
+      setMethod(getPaymentMethodId(preferredMethod));
     } else if (
       method &&
       paymentMethods.length > 0 &&
       !paymentMethods.some((pm) => getPaymentMethodId(pm) === method)
     ) {
-      setMethod(getPaymentMethodId(paymentMethods[0]));
+      const preferredMethod =
+        paymentMethods.find((pm) => pm.type === "Paystack") ||
+        paymentMethods[0];
+      setMethod(getPaymentMethodId(preferredMethod));
     }
   }, [method, paymentMethods]);
 
@@ -207,9 +202,6 @@ export default function MakePaymentPage() {
     selectedPaymentMethod,
   );
   const selectedMethodType = selectedPaymentMethod?.type || "";
-  const requiresPhoneNumber =
-    selectedPaymentMethod &&
-    MOBILE_MONEY_TYPES.has(selectedPaymentMethod.type as PaymentMethodType);
 
   const monthlyRent =
     Number(tenant?.rentAmount ?? property?.price_per_unit ?? 0) +
@@ -246,55 +238,52 @@ export default function MakePaymentPage() {
     };
   }, [tenant?.id]);
 
-  // Poll for M-Pesa payment final status when a M-Pesa payment is created
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
-    let cancelled = false;
+  const pollPaystackPaymentStatus = async (
+    reference: string,
+    paymentId?: string,
+  ) => {
+    const maxAttempts = 12;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const paymentStatusResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/payments/${encodeURIComponent(paymentId || reference)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
+            },
+          },
+        );
 
-    const startPolling = async (paymentId: string) => {
-      setPolling(true);
-      const { fetchPaymentById } = await import("@/lib/services/payments");
-      interval = setInterval(async () => {
-        try {
-          if (cancelled) return;
-          const updated = await fetchPaymentById(paymentId);
-          if (updated) {
-            setSavedPayment(updated);
-            if (
-              updated.status === "complete" ||
-              updated.status === "failed" ||
-              updated.status === "refunded"
-            ) {
-              // stop polling
-              if (interval) clearInterval(interval);
-              setPolling(false);
-            }
+        if (paymentStatusResponse.ok) {
+          const paymentData = await paymentStatusResponse.json();
+          const latestPayment =
+            paymentData?.data || paymentData?.payment || null;
+          if (latestPayment?.status === "complete") {
+            setSavedPayment(latestPayment as RentPayment);
+            setPaystackVerificationState("confirmed");
+            setStep("success");
+            setProcessing(false);
+            return;
           }
-        } catch (e) {
-          // ignore transient errors
-          console.warn("Polling payment failed:", e);
-        }
-      }, 3000);
-    };
 
-    if (
-      savedPayment &&
-      savedPayment.paymentMethod === "mpesa" &&
-      (savedPayment as any).paymentId
-    ) {
-      const paymentId = (savedPayment as any).paymentId || savedPayment.id;
-      startPolling(paymentId as string);
+          if (latestPayment?.status === "failed") {
+            setPaystackVerificationState("failed");
+            setProcessing(false);
+            setStep("confirm");
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn("Paystack verification polling failed:", error);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
-    return () => {
-      cancelled = true;
-      if (interval) clearInterval(interval);
-    };
-  }, [
-    savedPayment?.id,
-    savedPayment?.paymentMethod,
-    (savedPayment as any)?.paymentId,
-  ]);
+    setPaystackVerificationState("pending");
+    setStep("confirm");
+    setProcessing(false);
+  };
 
   const handleSubmit = async () => {
     if (step === "amount") {
@@ -309,43 +298,16 @@ export default function MakePaymentPage() {
         );
         return;
       }
-      if (requiresPhoneNumber) {
-        setStep("details");
-      } else {
-        setStep("confirm");
-      }
+      setStep("confirm");
       return;
     }
 
     if (step === "details") {
-      if (!selectedPaymentMethod) {
-        alert(
-          "No payment methods are available. Please contact your property administrator.",
-        );
-        return;
-      }
-      if (requiresPhoneNumber && !phoneNumber) {
-        alert(
-          `Please enter your ${getPaymentMethodLabel(
-            selectedPaymentMethod,
-          )} phone number.`,
-        );
-        return;
-      }
       setStep("confirm");
       return;
     }
 
     if (step === "confirm") {
-      if (requiresPhoneNumber && !phoneNumber) {
-        alert(
-          `Please enter your ${getPaymentMethodLabel(
-            selectedPaymentMethod,
-          )} phone number.`,
-        );
-        return;
-      }
-
       setProcessing(true);
       try {
         const paymentAmount = Number(amount || 0);
@@ -388,30 +350,60 @@ export default function MakePaymentPage() {
         }
 
         let rec: RentPayment | null = null;
-        if (requiresPhoneNumber) {
-          payload.paymentMethod = "mpesa";
-          payload.phoneNumber = phoneNumber;
 
-          if (mpesaGatewayDisabled) {
-            payload.notes +=
-              " (M-Pesa gateway disabled; payment saved locally)";
-            rec = await createManualPayment(payload);
-          } else {
-            rec = await createMpesaPayment(
-              payload as Partial<RentPayment> & {
-                phoneNumber: string;
-              },
-            );
+        // Handle Paystack payment with popup
+        if (selectedPaymentMethod?.type === "Paystack") {
+          const paystackResult = await createPaystackPayment(payload);
+          if (!paystackResult?.accessCode) {
+            throw new Error("Failed to initialize Paystack payment");
           }
-        } else {
-          payload.paymentMethod =
-            selectedMethodType === "Bank_Transfer"
-              ? "bank_transfer"
-              : selectedMethodType === "Visa_Mastercard"
-                ? "card"
-                : "manual";
-          rec = await createManualPayment(payload);
+
+          const paystackPublicKey =
+            apiSettings?.finance?.paymentProviders?.find(
+              (provider) => provider.name === "Paystack",
+            )?.config?.publicKey;
+
+          openPaystackPopup({
+            accessCode: paystackResult.accessCode,
+            publicKey: paystackPublicKey,
+            onLoad: () => {
+              setProcessing(false);
+            },
+            onSuccess: (transaction: any) => {
+              setPaystackVerificationState("pending");
+              setStep("confirm");
+              setProcessing(true);
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("paymentsUpdated"));
+              }
+              void pollPaystackPaymentStatus(
+                paystackResult.reference || "",
+                (paystackResult.payment as any)?._id ||
+                  (paystackResult.payment as any)?.id,
+              );
+              console.log("Paystack success", transaction);
+            },
+            onCancel: () => {
+              setProcessing(false);
+              setStep("confirm");
+            },
+            onError: (error: any) => {
+              console.error("Paystack popup error", error);
+              setProcessing(false);
+              setStep("confirm");
+            },
+          });
+
+          return;
         }
+
+        payload.paymentMethod =
+          selectedMethodType === "Bank_Transfer"
+            ? "bank_transfer"
+            : selectedMethodType === "Visa_Mastercard"
+              ? "card"
+              : "manual";
+        rec = await createManualPayment(payload);
 
         setSavedPayment(rec);
         if (typeof window !== "undefined")
@@ -420,6 +412,7 @@ export default function MakePaymentPage() {
         setProcessing(false);
         setStep("success");
       } catch (err) {
+        console.error("Payment error:", err);
         setProcessing(false);
         setTimeout(() => setStep("success"), 800);
       }
@@ -430,6 +423,7 @@ export default function MakePaymentPage() {
     setStep("amount");
     setAmount(defaultRent);
     setPhoneNumber("");
+    setPaystackVerificationState("idle");
     if (paymentMethods.length > 0) {
       setMethod(getPaymentMethodId(paymentMethods[0]));
     } else {
@@ -830,26 +824,25 @@ export default function MakePaymentPage() {
 
             <div>
               <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-2">
-                {requiresPhoneNumber
-                  ? savedPayment && savedPayment.status === "complete"
-                    ? `${selectedMethodLabel} Payment Confirmed`
-                    : `${selectedMethodLabel} Payment Initiated`
-                  : "Payment Successful!"}
+                {selectedPaymentMethod?.type === "Paystack"
+                  ? "Payment Processing"
+                  : requiresPhoneNumber
+                    ? savedPayment && savedPayment.status === "complete"
+                      ? `${selectedMethodLabel} Payment Confirmed`
+                      : `${selectedMethodLabel} Payment Initiated`
+                    : "Payment Successful!"}
               </h2>
               <p className="text-muted-foreground text-sm md:text-base">
-                {requiresPhoneNumber
-                  ? savedPayment && savedPayment.status === "complete"
-                    ? `Your payment of ${formatCurrency(amount, activeCurrency)} has been confirmed.`
-                    : savedPayment && savedPayment.status === "failed"
-                      ? `${selectedMethodLabel} payment failed: ${(savedPayment.raw && savedPayment.raw.metadata && savedPayment.raw.metadata.resultDesc) || "transaction failed"}`
-                      : `A ${selectedMethodLabel} payment request for ${formatCurrency(amount, activeCurrency)} has been sent to ${phoneNumber}. Please confirm the transaction on your phone.`
-                  : `Your payment of ${formatCurrency(amount, activeCurrency)} has been processed successfully.`}
+                {selectedPaymentMethod?.type === "Paystack"
+                  ? "The Paystack popup is open. Complete the checkout inside the popup to finish your payment securely."
+                  : requiresPhoneNumber
+                    ? savedPayment && savedPayment.status === "complete"
+                      ? `Your payment of ${formatCurrency(amount, activeCurrency)} has been confirmed.`
+                      : savedPayment && savedPayment.status === "failed"
+                        ? `${selectedMethodLabel} payment failed: ${(savedPayment.raw && savedPayment.raw.metadata && savedPayment.raw.metadata.resultDesc) || "transaction failed"}`
+                        : `A ${selectedMethodLabel} payment request for ${formatCurrency(amount, activeCurrency)} has been sent to ${phoneNumber}. Please confirm the transaction on your phone.`
+                    : `Your payment of ${formatCurrency(amount, activeCurrency)} has been processed successfully.`}
               </p>
-              {requiresPhoneNumber && polling && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  Waiting for confirmation... This may take a few seconds.
-                </p>
-              )}
               {requiresPhoneNumber &&
                 savedPayment &&
                 savedPayment.status === "failed" && (

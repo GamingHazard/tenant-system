@@ -108,27 +108,18 @@ export interface NotificationPreferences {
 export type PaymentMethodType =
   | "MTN_MoMo"
   | "Airtel_Money"
-  | "M-Pesa"
   | "Orange_Money"
   | "Visa_Mastercard"
-  | "Bank_Transfer";
+  | "Bank_Transfer"
+  | "Paystack";
 
 export interface BankDetails {
   accountHolder?: string;
   accountNumber?: string;
   bankName?: string;
+  bankCode?: string;
   swiftCode?: string;
   routingNumber?: string;
-}
-
-export interface MpesaDetails {
-  shortcode?: string;
-  consumerKey?: string;
-  // secrets are stored encrypted on the server; UI will treat these as masked values
-  consumerSecret?: string;
-  passkey?: string;
-  environment?: "sandbox" | "production";
-  is_active?: boolean;
 }
 
 export interface AdminPaymentMethod {
@@ -137,7 +128,6 @@ export interface AdminPaymentMethod {
   enabled: boolean;
   transactionNumber?: string;
   bankDetails?: BankDetails;
-  mpesa?: MpesaDetails;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -253,8 +243,7 @@ const defaultTenantPortalSettings: TenantPortalSettings = {
     acceptedMethods: [
       { type: "credit_card", enabled: false, processingFee: 2.9 },
       { type: "bank_transfer", enabled: false, processingFee: 0.5 },
-      { type: "mpesa", enabled: false, processingFee: 0.5 },
-      { type: "mobile money", enabled: false, processingFee: 0.5 },
+      { type: "Paystack", enabled: true, processingFee: 0.5 },
     ],
     paymentProviders: [],
   },
@@ -309,8 +298,7 @@ const defaultTenantPortalSettings: TenantPortalSettings = {
     paymentMethods: [
       { type: "credit_card", enabled: false, processingFee: 2.9 },
       { type: "bank_transfer", enabled: false, processingFee: 0.5 },
-      { type: "mpesa", enabled: false, processingFee: 0.5 },
-      { type: "mobile_money", enabled: false, processingFee: 0.5 },
+      { type: "Paystack", enabled: true, processingFee: 0.5 },
     ],
   },
 };
@@ -991,6 +979,89 @@ export interface SettingsPayload {
   };
   createdAt?: string;
   updatedAt?: string;
+}
+
+// Paystack bank type used by UI
+export interface PaystackBank {
+  name: string;
+  code: string;
+  country?: string;
+  [key: string]: any;
+}
+
+/**
+ * Fetch Paystack banks via the backend proxy and cache in localStorage.
+ * Returns array of simplified bank objects { name, code, country }
+ */
+export async function fetchPaystackBanks(
+  token?: string,
+  country?: string,
+  ttlMs: number = 24 * 60 * 60 * 1000,
+): Promise<PaystackBank[] | null> {
+  try {
+    const countryKey = country ? String(country).trim().toLowerCase() : "all";
+    const cacheKey = `paystack_banks_${countryKey}`;
+
+    // Try local cache first (only available in browser)
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(cacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (
+            parsed?.ts &&
+            Date.now() - parsed.ts < ttlMs &&
+            Array.isArray(parsed.data)
+          ) {
+            return parsed.data as PaystackBank[];
+          }
+        }
+      } catch (e) {
+        // ignore localStorage errors
+      }
+    }
+
+    // Call backend proxy
+    const res = await apiRequest(
+      "GET",
+      "/gateways/paystack/banks",
+      country ? { country } : undefined,
+      token,
+    );
+    if (!res.ok) {
+      return null;
+    }
+
+    const payload = res.data as any;
+    const source = payload?.data || payload;
+    if (!Array.isArray(source)) return null;
+
+    const mapped: PaystackBank[] = source.map((b: any) => ({
+      name: b.name || String(b).slice(0, 64),
+      code: String(
+        b.code || b.id || b.bank_code || b.bank_id || b.slug || b.name || "",
+      ).trim(),
+      country: b.country,
+      ...b,
+    }));
+
+    // persist to localStorage
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(
+          cacheKey,
+          JSON.stringify({ ts: Date.now(), data: mapped }),
+        );
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    return mapped;
+  } catch (error) {
+    console.warn("fetchPaystackBanks failed:", error);
+    return null;
+  }
 }
 
 // Legacy flat format (for backwards compatibility during migration)

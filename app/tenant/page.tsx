@@ -16,6 +16,7 @@ import {
   HourglassIcon,
   LucideHourglass,
 } from "lucide-react";
+import LeaseEndDisplay from "@/components/ui/lease-end-display";
 import { useTenantContext } from "@/lib/tenant-context";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currency";
 import { useActiveCurrency } from "@/lib/hooks/use-active-currency";
@@ -51,8 +52,6 @@ export default function TenantDashboard() {
     const map: Record<string, string> = {
       MTN_MoMo: "MTN MoMo",
       Airtel_Money: "Airtel Money",
-      "M-Pesa": "M-Pesa",
-      mpesa: "M-Pesa",
       Orange_Money: "Orange Money",
       Visa_Mastercard: "Credit / Debit Card",
       Bank_Transfer: "Bank Transfer",
@@ -60,6 +59,7 @@ export default function TenantDashboard() {
       card: "Credit / Debit Card",
       visa: "Visa / Mastercard",
       mastercard: "Visa / Mastercard",
+      Paystack: "Paystack",
       mobile_money: "Mobile Money",
       mobilemoney: "Mobile Money",
     };
@@ -223,12 +223,12 @@ export default function TenantDashboard() {
               <p className="text-xs md:text-sm text-muted-foreground mb-1">
                 Lease Expires
               </p>
-              <p className="text-lg md:text-lg font-bold text-foreground">
-                {leaseExpiration ? leaseExpiration.toLocaleDateString() : "N/A"}
-              </p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Lease type: {tenant?.leaseType || "Month-to-month"}
-              </p>
+              <LeaseEndDisplay
+                tenant={tenant}
+                onRenew={() => {
+                  /* TODO: navigate to contact */
+                }}
+              />
             </div>
             <div className="w-10 h-10 absolute top-1 right-1 md:w-12 md:h-12 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
               <LucideHourglass className="w-5 h-5 md:w-6 md:h-6 text-purple-600" />

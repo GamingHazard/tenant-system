@@ -70,6 +70,7 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
 import { useActiveCurrency } from "@/lib/hooks/use-active-currency";
+import LeaseEndDisplay from "@/components/ui/lease-end-display";
 
 interface TenantDetailPageProps {
   params: Promise<{
@@ -742,9 +743,7 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">
-                    Position
-                  </p>
+                  <p className="text-sm text-muted-foreground mb-1">Position</p>
                   <p className="text-foreground">
                     {tenant.position || "Not provided"}
                   </p>
@@ -849,9 +848,9 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
                   <p className="text-sm text-muted-foreground mb-1">
                     Lease End Date
                   </p>
-                  <p className="text-foreground">
-                    {leaseEnd.toLocaleDateString()}
-                  </p>
+                  <div className="text-foreground">
+                    <LeaseEndDisplay tenant={tenant} />
+                  </div>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground mb-1">
@@ -1052,7 +1051,9 @@ export default function TenantDetailPage({ params }: TenantDetailPageProps) {
               </div>
             )}
 
-            {(tenant.policyGiven?.title || tenant.policyGiven?.body || tenant.policyExceptions) && (
+            {(tenant.policyGiven?.title ||
+              tenant.policyGiven?.body ||
+              tenant.policyExceptions) && (
               <div className="space-y-4 border border-border rounded-lg p-4 bg-secondary/20">
                 <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
                   <FileText className="w-5 h-5" />

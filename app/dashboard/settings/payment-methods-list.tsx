@@ -29,10 +29,10 @@ const getDisplayName = (type: PaymentMethodType): string => {
   const names: Record<PaymentMethodType, string> = {
     MTN_MoMo: "MTN MoMo",
     Airtel_Money: "Airtel Money",
-    "M-Pesa": "M-Pesa",
     Orange_Money: "Orange Money",
     Visa_Mastercard: "Visa/Mastercard",
     Bank_Transfer: "Bank Transfer",
+    Paystack: "Paystack",
   };
   return names[type];
 };
@@ -41,10 +41,10 @@ const getMethodIcon = (type: PaymentMethodType): string => {
   const icons: Record<PaymentMethodType, string> = {
     MTN_MoMo: "/mtn.png",
     Airtel_Money: "/airtel.png",
-    "M-Pesa": "/mpesa.png",
     Orange_Money: "/orange.png",
     Visa_Mastercard: "/cards.png",
     Bank_Transfer: "/bank.png",
+    Paystack: "/paystack.png",
   };
   return icons[type];
 };
@@ -148,41 +148,6 @@ export function PaymentMethodsList({
                   <p className="font-mono text-sm">
                     {method.transactionNumber}
                   </p>
-                </div>
-              )}
-
-              {/* M-Pesa Details */}
-              {method.mpesa && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-600">M-Pesa</p>
-                  <div className="space-y-1 text-sm">
-                    <p>
-                      <span className="text-gray-600">Shortcode:</span>{" "}
-                      {method.mpesa.shortcode || "N/A"}
-                    </p>
-                    <p>
-                      <span className="text-gray-600">Consumer Key:</span>{" "}
-                      {method.mpesa.consumerKey || "N/A"}
-                    </p>
-                    <p>
-                      <span className="text-gray-600">Consumer Secret:</span>{" "}
-                      {method.mpesa.consumerSecret
-                        ? "Configured"
-                        : "Not configured"}
-                    </p>
-                    <p>
-                      <span className="text-gray-600">Passkey:</span>{" "}
-                      {method.mpesa.passkey ? "Configured" : "Not configured"}
-                    </p>
-                    <p>
-                      <span className="text-gray-600">Environment:</span>{" "}
-                      {method.mpesa.environment || "sandbox"}
-                    </p>
-                    <p>
-                      <span className="text-gray-600">Active:</span>{" "}
-                      {method.mpesa.is_active ? "Yes" : "No"}
-                    </p>
-                  </div>
                 </div>
               )}
 

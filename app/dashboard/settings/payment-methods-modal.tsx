@@ -20,12 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import BankSelector from "@/components/bank-selector";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AdminPaymentMethod,
   BankDetails,
   PaymentMethodType,
-  MpesaDetails,
 } from "@/lib/services/settings";
 
 interface PaymentMethodsModalProps {
@@ -36,37 +36,25 @@ interface PaymentMethodsModalProps {
   editingMethod?: AdminPaymentMethod;
   isSaving?: boolean;
   isDeleting?: boolean;
+  country?: string;
 }
 
-const PAYMENT_METHOD_TYPES: PaymentMethodType[] = [
-  "MTN_MoMo",
-  "Airtel_Money",
-  "M-Pesa",
-  "Orange_Money",
-  "Visa_Mastercard",
-  "Bank_Transfer",
-];
+// Limit available methods to Paystack only for payout/subaccount creation
+const PAYMENT_METHOD_TYPES: PaymentMethodType[] = ["Paystack"];
 
-const MOBILE_MONEY_TYPES: PaymentMethodType[] = [
-  "MTN_MoMo",
-  "Airtel_Money",
-  "M-Pesa",
-  "Orange_Money",
-];
+const MOBILE_MONEY_TYPES: PaymentMethodType[] = [];
 
-const BANK_PAYMENT_TYPES: PaymentMethodType[] = [
-  "Visa_Mastercard",
-  "Bank_Transfer",
-];
+// Treat Paystack as a bank-type method for collecting account details
+const BANK_PAYMENT_TYPES: PaymentMethodType[] = ["Paystack"];
 
 const getDisplayName = (type: PaymentMethodType): string => {
   const names: Record<PaymentMethodType, string> = {
     MTN_MoMo: "MTN MoMo",
     Airtel_Money: "Airtel Money",
-    "M-Pesa": "M-Pesa",
     Orange_Money: "Orange Money",
     Visa_Mastercard: "Visa/Mastercard",
     Bank_Transfer: "Bank Transfer",
+    Paystack: "Paystack",
   };
   return names[type];
 };
@@ -79,39 +67,30 @@ export function PaymentMethodsModal({
   editingMethod,
   isSaving,
   isDeleting,
+  country,
 }: PaymentMethodsModalProps) {
   const [formData, setFormData] = useState<AdminPaymentMethod>({
-    type: "MTN_MoMo",
+    type: "Paystack",
     enabled: false,
   });
 
   const [bankDetails, setBankDetails] = useState<BankDetails>({});
-  const [mpesaDetails, setMpesaDetails] = useState<MpesaDetails>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (editingMethod) {
       setFormData(editingMethod);
       setBankDetails(editingMethod.bankDetails || {});
-      setMpesaDetails((editingMethod as any).mpesa || {});
     } else {
-      setFormData({ type: "MTN_MoMo", enabled: false });
+      setFormData({ type: "Paystack", enabled: false });
       setBankDetails({});
-      setMpesaDetails({});
     }
     setErrors({});
   }, [editingMethod, isOpen]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
-
-    if (MOBILE_MONEY_TYPES.includes(formData.type)) {
-      if (!formData.transactionNumber?.trim()) {
-        newErrors.transactionNumber =
-          "Transaction number is required for mobile money";
-      }
-    }
-
+    // For Paystack, require bank account details
     if (BANK_PAYMENT_TYPES.includes(formData.type)) {
       if (!bankDetails.accountNumber?.trim()) {
         newErrors.accountNumber = "Account number is required";
@@ -119,23 +98,8 @@ export function PaymentMethodsModal({
       if (!bankDetails.accountHolder?.trim()) {
         newErrors.accountHolder = "Account holder is required";
       }
-      if (!bankDetails.bankName?.trim()) {
-        newErrors.bankName = "Bank name is required";
-      }
-    }
-
-    // M-Pesa specific validation when enabling
-    if (formData.type === "M-Pesa") {
-      const mp = mpesaDetails || {};
-      const requires = mp.is_active === true || formData.enabled === true;
-      if (requires) {
-        if (!mp.shortcode || !String(mp.shortcode).trim()) {
-          newErrors.shortcode = "Shortcode is required for M-Pesa when enabled";
-        }
-        if (!mp.consumerKey || !String(mp.consumerKey).trim()) {
-          newErrors.consumerKey =
-            "Consumer key is required for M-Pesa when enabled";
-        }
+      if (!bankDetails.bankCode?.trim()) {
+        newErrors.bankCode = "Bank is required";
       }
     }
 
@@ -146,6 +110,10 @@ export function PaymentMethodsModal({
   const handleSave = () => {
     if (!validateForm()) return;
 
+    // Build a method payload compatible with server expectations:
+    // - keep `bankDetails` for UI/local use
+    // - add top-level `bank.code`, `accountNumber`, and `businessName` so
+    //   the server can create Paystack subaccounts when settings are saved
     const method: AdminPaymentMethod = {
       ...formData,
       bankDetails: BANK_PAYMENT_TYPES.includes(formData.type)
@@ -154,18 +122,58 @@ export function PaymentMethodsModal({
       transactionNumber: MOBILE_MONEY_TYPES.includes(formData.type)
         ? formData.transactionNumber
         : undefined,
+    } as AdminPaymentMethod;
+
+    const submit = async () => {
+      if (BANK_PAYMENT_TYPES.includes(formData.type)) {
+        // call API to create Paystack subaccount immediately
+        try {
+          const resp = await fetch("/api/settings/paystack-recipients", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              businessName: bankDetails.accountHolder || undefined,
+              bankCode: bankDetails.bankCode || "",
+              accountNumber: bankDetails.accountNumber,
+              percentageCharge: 0,
+            }),
+          });
+
+          const payload = await resp.json();
+          if (!resp.ok || !payload?.success) {
+            throw new Error(
+              payload?.error?.message || "Failed to create subaccount",
+            );
+          }
+
+          // service returns { recipient, subaccountCode, rawResponse } or recipient
+          const created = payload.data;
+          const subaccountCode =
+            created.subaccountCode ||
+            created.subaccount_code ||
+            created.recipient?.subaccountCode ||
+            created.recipient?.subaccount_code;
+          if (subaccountCode) {
+            method.subaccountCode = subaccountCode;
+          }
+
+          // show confirmation to admin
+          window.alert(
+            `Paystack subaccount created: ${subaccountCode || "(created)"}`,
+          );
+        } catch (err: any) {
+          console.error("Failed to create Paystack subaccount:", err);
+          window.alert(
+            "Failed to create Paystack subaccount. Settings will still be saved, but please verify bank details.",
+          );
+        }
+      }
+
+      onSave(method);
+      onClose();
     };
 
-    if (formData.type === "M-Pesa") {
-      // Only include secrets if admin entered them (empty means keep existing)
-      const mp: any = { ...mpesaDetails };
-      if (!mp.consumerSecret) delete mp.consumerSecret;
-      if (!mp.passkey) delete mp.passkey;
-      method.mpesa = mp;
-    }
-
-    onSave(method);
-    onClose();
+    void submit();
   };
 
   const handleDelete = () => {
@@ -197,17 +205,8 @@ export function PaymentMethodsModal({
     });
   };
 
-  const handleMpesaChange = (field: keyof MpesaDetails, value: any) => {
-    setMpesaDetails({
-      ...mpesaDetails,
-      [field]: value,
-    });
-  };
-
   const isMobileMoneyType = MOBILE_MONEY_TYPES.includes(formData.type);
   const isBankType = BANK_PAYMENT_TYPES.includes(formData.type);
-
-  const isMpesaType = formData.type === "M-Pesa";
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -302,18 +301,13 @@ export function PaymentMethodsModal({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="bank-name">Bank Name</Label>
-                <Input
-                  id="bank-name"
-                  placeholder="Name of bank or financial institution"
-                  value={bankDetails.bankName || ""}
-                  onChange={(e) =>
-                    handleBankDetailChange("bankName", e.target.value)
-                  }
-                  className={errors.bankName ? "border-red-500" : ""}
+                <BankSelector
+                  value={bankDetails.bankCode}
+                  onChange={(code) => handleBankDetailChange("bankCode", code)}
+                  country={country}
                 />
-                {errors.bankName && (
-                  <p className="text-sm text-red-500">{errors.bankName}</p>
+                {errors.bankCode && (
+                  <p className="text-sm text-red-500">{errors.bankCode}</p>
                 )}
               </div>
 
@@ -344,110 +338,6 @@ export function PaymentMethodsModal({
                     }
                   />
                   <p className="text-xs text-gray-500">US transfers</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* M-Pesa Specific Fields */}
-          {isMpesaType && (
-            <div className="space-y-4 border-t pt-4">
-              <h3 className="font-medium">M-Pesa Configuration</h3>
-
-              <div className="space-y-2">
-                <Label htmlFor="mpesa-shortcode">Shortcode</Label>
-                <Input
-                  id="mpesa-shortcode"
-                  placeholder="Shortcode / Till number"
-                  value={mpesaDetails.shortcode || ""}
-                  onChange={(e) =>
-                    handleMpesaChange("shortcode", e.target.value)
-                  }
-                  className={errors.shortcode ? "border-red-500" : ""}
-                />
-                {errors.shortcode && (
-                  <p className="text-sm text-red-500">{errors.shortcode}</p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="mpesa-consumer-key">Consumer Key</Label>
-                <Input
-                  id="mpesa-consumer-key"
-                  placeholder="Consumer Key"
-                  value={mpesaDetails.consumerKey || ""}
-                  onChange={(e) =>
-                    handleMpesaChange("consumerKey", e.target.value)
-                  }
-                  className={errors.consumerKey ? "border-red-500" : ""}
-                />
-                {errors.consumerKey && (
-                  <p className="text-sm text-red-500">{errors.consumerKey}</p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="mpesa-consumer-secret">Consumer Secret</Label>
-                  <Input
-                    id="mpesa-consumer-secret"
-                    type="password"
-                    placeholder={
-                      mpesaDetails.consumerSecret
-                        ? "****** (configured)"
-                        : "Consumer Secret"
-                    }
-                    value={mpesaDetails.consumerSecret || ""}
-                    onChange={(e) =>
-                      handleMpesaChange("consumerSecret", e.target.value)
-                    }
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="mpesa-passkey">Passkey</Label>
-                  <Input
-                    id="mpesa-passkey"
-                    type="password"
-                    placeholder={
-                      mpesaDetails.passkey ? "****** (configured)" : "Passkey"
-                    }
-                    value={mpesaDetails.passkey || ""}
-                    onChange={(e) =>
-                      handleMpesaChange("passkey", e.target.value)
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 items-end">
-                <div>
-                  <Label htmlFor="mpesa-environment">Environment</Label>
-                  <Select
-                    value={mpesaDetails.environment || "sandbox"}
-                    onValueChange={(v) => handleMpesaChange("environment", v)}
-                  >
-                    <SelectTrigger id="mpesa-environment">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sandbox">Sandbox</SelectItem>
-                      <SelectItem value="production">Production</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="mpesa-active"
-                    checked={Boolean(mpesaDetails.is_active)}
-                    onCheckedChange={(c) =>
-                      handleMpesaChange("is_active", Boolean(c))
-                    }
-                  />
-                  <Label htmlFor="mpesa-active" className="cursor-pointer">
-                    M-Pesa Active
-                  </Label>
                 </div>
               </div>
             </div>

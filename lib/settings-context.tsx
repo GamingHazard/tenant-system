@@ -17,6 +17,8 @@ import {
   convertPayloadToTenantPortalSettings,
   TenantPortalSettings,
   fetchSettingsByTenantId,
+  fetchPaystackBanks,
+  PaystackBank,
 } from "@/lib/services/settings";
 import { useAuth } from "@/lib/auth-context";
 
@@ -29,6 +31,9 @@ interface SettingsContextType {
   refresh: () => Promise<void>;
   updateFieldAsync: (flatKey: string, value: any) => Promise<boolean>;
   clearError: () => void;
+  paystackBanks: PaystackBank[] | null;
+  isBanksLoaded: boolean;
+  refreshBanks: (country?: string) => Promise<void>;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(
@@ -42,6 +47,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasFetched, setHasFetched] = useState(false);
+  const [paystackBanks, setPaystackBanks] = useState<PaystackBank[] | null>(
+    null,
+  );
+  const [isBanksLoaded, setIsBanksLoaded] = useState(false);
 
   // Fetch settings from API
   const fetchSettings = useCallback(async () => {
@@ -81,6 +90,23 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setError("Failed to load settings from API");
         setSettings(null);
       }
+
+      // Fetch Paystack banks in parallel (best-effort)
+      (async () => {
+        try {
+          const country = apiSettings?.finance?.currency?.country || undefined;
+          setIsBanksLoaded(false);
+          const banks = await fetchPaystackBanks(
+            token ? token : undefined,
+            country,
+          );
+          setPaystackBanks(banks);
+        } catch (e) {
+          setPaystackBanks(null);
+        } finally {
+          setIsBanksLoaded(true);
+        }
+      })();
     } catch (err) {
       console.error("Error fetching settings:", err);
       setError(err instanceof Error ? err.message : "Failed to fetch settings");
@@ -140,6 +166,24 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const isLoaded = !isLoading && hasFetched && settings !== null;
 
+  const refreshBanks = useCallback(
+    async (country?: string) => {
+      setIsBanksLoaded(false);
+      try {
+        const banks = await fetchPaystackBanks(
+          token ? token : undefined,
+          country,
+        );
+        setPaystackBanks(banks);
+      } catch (e) {
+        setPaystackBanks(null);
+      } finally {
+        setIsBanksLoaded(true);
+      }
+    },
+    [token],
+  );
+
   // Manual refresh
   const refresh = useCallback(async () => {
     setHasFetched(false); // Force re-fetch
@@ -193,6 +237,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     refresh,
     updateFieldAsync,
     clearError,
+    paystackBanks,
+    isBanksLoaded,
+    refreshBanks,
   };
 
   return (

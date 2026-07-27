@@ -5,7 +5,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import { SettingsProvider } from "@/lib/settings-context";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/query-provider";
-import { ThemeProvider } from "@/components/theme-provider";
+import ThemeProvider from "./theme-provider-client";
 import Polyfills from "@/app/polyfills";
 import "./globals.css";
 

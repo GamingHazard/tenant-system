@@ -1541,6 +1541,7 @@ export default function SettingsPage() {
                   editingMethod={editingPaymentMethod}
                   isSaving={paymentMethodsSaving}
                   isDeleting={Boolean(paymentMethodDeletingId)}
+                  country={settings?.companyInfo?.address?.country || ""}
                   onSave={async (method) => {
                     const updated = editingPaymentMethod?._id
                       ? (apiSettings?.finance?.paymentMethods || []).map((m) =>

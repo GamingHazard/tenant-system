@@ -16,9 +16,6 @@ function dispatchPaymentsUpdatedEvent() {
   }
 }
 
-const isMpesaGatewayDisabled =
-  process.env.NEXT_PUBLIC_DISABLE_MPESA_GATEWAY === "true";
-
 function normalizePaymentAmount(value: unknown) {
   const num = Number(value ?? 0);
   return Number.isFinite(num) ? num : 0;
@@ -58,9 +55,9 @@ function applyTenantStatusFromPayment(payment: any) {
       payment.amountPaid ??
       payment.paymentAmount,
   );
-  const property = getProperty(tenant.propertyId);
+  const property = getProperty(tenant?.propertyId ? tenant.propertyId : "");
   const rent =
-    normalizePaymentAmount(tenant.rentAmount ?? 0) +
+    normalizePaymentAmount(tenant?.rentAmount ?? 0) +
     normalizePaymentAmount(property?.serviceFee ?? 0);
   const balanceAfterPayment = normalizePaymentAmount(
     payment.balanceAfterPayment ?? payment.balance ?? 0,
@@ -99,13 +96,7 @@ export interface RentPayment {
   txdId?: string;
   transId?: string;
   amount: number;
-  paymentMethod:
-    | "cash"
-    | "bank_transfer"
-    | "check"
-    | "card"
-    | "manual"
-    | "mpesa";
+  paymentMethod: "cash" | "bank_transfer" | "check" | "card" | "manual";
   leaseType?: string;
   paidOn: string;
   paidBy?: string;
@@ -184,48 +175,43 @@ export async function createManualPayment(
   }
 }
 
-export async function createMpesaPayment(
-  payload: Partial<RentPayment> & { phoneNumber: string },
-): Promise<RentPayment | null> {
+export async function createPaystackPayment(
+  payload: Partial<RentPayment>,
+): Promise<{
+  payment: RentPayment;
+  authorizationUrl?: string;
+  accessCode?: string;
+  reference?: string;
+} | null> {
   try {
-    if (isMpesaGatewayDisabled) {
-      console.warn(
-        "[Payment Service] M-Pesa gateway disabled via NEXT_PUBLIC_DISABLE_MPESA_GATEWAY; saving payment locally.",
-      );
-      return await createManualPayment({
-        ...payload,
-        paymentMethod: "mpesa",
-        notes:
-          `${payload.notes || ""}`.trim() +
-          " (M-Pesa gateway disabled; payment saved locally)",
-      });
+    console.log("[createPaystackPayment] initiate payload:", payload);
+    const res = await apiRequest(
+      "POST",
+      "/payments/paystack/initiate",
+      payload,
+    );
+    const json = await res.json();
+
+    if (!json.success) {
+      console.error("[Paystack] Payment initiation failed:", json.error);
+      return null;
     }
 
-    // Debug: log the outgoing payload for initiate calls
-    try {
-      console.log("[createMpesaPayment] initiate payload:", payload);
-    } catch (_) {}
-    const res = await apiRequest("POST", "/payments/mpesa/initiate", payload);
-    const json = await res.json();
-    const raw = json?.data || json?.payment || json || null;
+    const raw = json?.data?.payment || json?.data || null;
     if (!raw) return null;
 
-    // Attach API-provided ids for client polling
-    raw._api_paymentId = json?.paymentId || raw._id || raw.id;
-    raw._checkoutRequestID =
-      json?.checkoutRequestID || raw?.metadata?.checkoutRequestID;
-
     const record = mapServerPaymentToClient(raw);
-    // expose these helper fields on the client object
-    (record as any).paymentId = raw._api_paymentId;
-    (record as any).checkoutRequestID = raw._checkoutRequestID;
-    (record as any).customerMessage = json?.customerMessage || null;
-
     applyTenantStatusFromPayment(record);
     dispatchPaymentsUpdatedEvent();
-    return record;
+
+    return {
+      payment: record,
+      authorizationUrl: json.data?.authorizationUrl,
+      accessCode: json.data?.accessCode,
+      reference: json.data?.reference,
+    };
   } catch (err) {
-    console.warn("Failed to initiate M-Pesa payment:", err);
+    console.warn("Failed to initiate Paystack payment:", err);
     return null;
   }
 }

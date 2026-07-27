@@ -32,12 +32,13 @@ import { useActiveCurrency } from "@/lib/hooks/use-active-currency";
 import { useFeatureEnabled } from "@/lib/hooks/use-tenant-portal-features";
 import {
   createManualPayment,
-  createMpesaPayment,
+  createPaystackPayment,
   PAYMENT_LIST_FIELDS,
   PaymentRecord,
   RentPayment,
   getPaymentsForTenant,
 } from "@/lib/services/payments";
+import { openPaystackPopup } from "@/lib/services/paystack-popup";
 import { AdminPaymentMethod, PaymentMethodType } from "@/lib/services/settings";
 import { useTenantContext } from "@/lib/tenant-context";
 
@@ -60,9 +61,11 @@ export default function PaymentsPage() {
   >("amount");
   const [amount, setAmount] = useState<number>(0);
   const [method, setMethod] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
   const [processing, setProcessing] = useState(false);
   const [savedPayment, setSavedPayment] = useState<RentPayment | null>(null);
+  const [paystackVerificationState, setPaystackVerificationState] = useState<
+    "idle" | "pending" | "confirmed" | "failed"
+  >("idle");
 
   // Use tenant and property from context (already derived)
   const tenant = currentTenant;
@@ -75,16 +78,15 @@ export default function PaymentsPage() {
   const PAYMENT_METHOD_LABELS: Record<PaymentMethodType | string, string> = {
     MTN_MoMo: "MTN MoMo",
     Airtel_Money: "Airtel Money",
-    "M-Pesa": "M-Pesa",
     Orange_Money: "Orange Money",
     Visa_Mastercard: "Credit / Debit Card",
     Bank_Transfer: "Bank Transfer",
+    Paystack: "Paystack",
   };
 
   const MOBILE_MONEY_TYPES = new Set<PaymentMethodType>([
     "MTN_MoMo",
     "Airtel_Money",
-    "M-Pesa",
     "Orange_Money",
   ]);
 
@@ -98,8 +100,8 @@ export default function PaymentsPage() {
 
   const getPaymentMethodDescription = (method: AdminPaymentMethod | null) => {
     if (!method) return "";
-    if (method.type === "M-Pesa") {
-      return "Pay with M-Pesa mobile money via STK Push.";
+    if (method.type === "Paystack") {
+      return "Pay with any payment method supported by Paystack (cards, mobile money, bank transfer, etc.)";
     }
     if (method.type === "Bank_Transfer") {
       return method.bankDetails?.bankName
@@ -139,22 +141,23 @@ export default function PaymentsPage() {
 
   const hasPaymentMethods = paymentMethods.length > 0;
 
-  const requiresPhoneNumber =
-    selectedPaymentMethod &&
-    MOBILE_MONEY_TYPES.has(selectedPaymentMethod.type as PaymentMethodType);
-
-  const mpesaGatewayDisabled =
-    process.env.NEXT_PUBLIC_DISABLE_MPESA_GATEWAY === "true";
+  const requiresPhoneNumber = false;
 
   useEffect(() => {
     if (!method && paymentMethods.length > 0) {
-      setMethod(getPaymentMethodId(paymentMethods[0]));
+      const preferredMethod =
+        paymentMethods.find((pm) => pm.type === "Paystack") ||
+        paymentMethods[0];
+      setMethod(getPaymentMethodId(preferredMethod));
     } else if (
       method &&
       paymentMethods.length > 0 &&
       !paymentMethods.some((pm) => getPaymentMethodId(pm) === method)
     ) {
-      setMethod(getPaymentMethodId(paymentMethods[0]));
+      const preferredMethod =
+        paymentMethods.find((pm) => pm.type === "Paystack") ||
+        paymentMethods[0];
+      setMethod(getPaymentMethodId(preferredMethod));
     }
   }, [method, paymentMethods]);
 
@@ -204,6 +207,53 @@ export default function PaymentsPage() {
     .filter((p) => p.status === "complete")
     .reduce((sum, p) => sum + (p.amount || 0), 0);
 
+  const pollPaystackPaymentStatus = async (
+    reference: string,
+    paymentId?: string,
+  ) => {
+    const maxAttempts = 12;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const paymentStatusResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/payments/${encodeURIComponent(paymentId || reference)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token || ""}`,
+            },
+          },
+        );
+
+        if (paymentStatusResponse.ok) {
+          const paymentData = await paymentStatusResponse.json();
+          const latestPayment =
+            paymentData?.data || paymentData?.payment || null;
+          if (latestPayment?.status === "complete") {
+            setSavedPayment(latestPayment as RentPayment);
+            setPaystackVerificationState("confirmed");
+            setStep("success");
+            setProcessing(false);
+            return;
+          }
+
+          if (latestPayment?.status === "failed") {
+            setPaystackVerificationState("failed");
+            setProcessing(false);
+            setStep("confirm");
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn("Paystack verification polling failed:", error);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+
+    setPaystackVerificationState("pending");
+    setStep("confirm");
+    setProcessing(false);
+  };
+
   const handlePaymentSubmit = async () => {
     if (step === "amount") {
       setStep("method");
@@ -217,21 +267,11 @@ export default function PaymentsPage() {
         );
         return;
       }
-      if (requiresPhoneNumber) {
-        setStep("details");
-      } else {
-        setStep("confirm");
-      }
+      setStep("confirm");
       return;
     }
 
     if (step === "details") {
-      if (requiresPhoneNumber && !phoneNumber) {
-        alert(
-          `Please enter your ${getPaymentMethodLabel(selectedPaymentMethod)} phone number.`,
-        );
-        return;
-      }
       setStep("confirm");
       return;
     }
@@ -242,6 +282,7 @@ export default function PaymentsPage() {
         const payload: Partial<RentPayment> & {
           phoneNumber?: string;
           method?: string;
+          serviceFee?: number;
         } = {
           tenantId: tenant?.id || user?.id || "",
           propertyId: tenant?.propertyId || property?.id,
@@ -259,28 +300,67 @@ export default function PaymentsPage() {
         }
 
         let rec: RentPayment | null = null;
-        if (requiresPhoneNumber) {
-          payload.paymentMethod = "mpesa";
-          payload.phoneNumber = phoneNumber;
 
-          if (mpesaGatewayDisabled) {
-            payload.notes +=
-              " (M-Pesa gateway disabled; payment saved locally)";
-            rec = await createManualPayment(payload);
-          } else {
-            rec = await createMpesaPayment(
-              payload as Partial<RentPayment> & { phoneNumber: string },
-            );
+        // Handle Paystack payment with popup
+        if (selectedPaymentMethod?.type === "Paystack") {
+          const paystackResult = await createPaystackPayment(payload);
+          if (!paystackResult?.accessCode) {
+            throw new Error("Failed to initialize Paystack payment");
           }
-        } else {
-          payload.paymentMethod =
-            selectedPaymentMethod?.type === "Bank_Transfer"
-              ? "bank_transfer"
-              : selectedPaymentMethod?.type === "Visa_Mastercard"
-                ? "card"
-                : "manual";
-          rec = await createManualPayment(payload);
+
+          const paystackPublicKey = (
+            apiSettings?.finance as
+              | {
+                  paymentProviders?: Array<{
+                    name?: string;
+                    config?: Record<string, unknown>;
+                  }>;
+                }
+              | undefined
+          )?.paymentProviders?.find((provider) => provider.name === "Paystack")
+            ?.config?.publicKey as string | undefined;
+
+          openPaystackPopup({
+            accessCode: paystackResult.accessCode,
+            publicKey: paystackPublicKey,
+            onLoad: () => {
+              setProcessing(false);
+            },
+            onSuccess: (transaction: any) => {
+              setPaystackVerificationState("pending");
+              setStep("confirm");
+              setProcessing(true);
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("paymentsUpdated"));
+              }
+              void pollPaystackPaymentStatus(
+                paystackResult.reference || "",
+                (paystackResult.payment as any)?._id ||
+                  (paystackResult.payment as any)?.id,
+              );
+              console.log("Paystack success", transaction);
+            },
+            onCancel: () => {
+              setProcessing(false);
+              setStep("confirm");
+            },
+            onError: (error: any) => {
+              console.error("Paystack popup error", error);
+              setProcessing(false);
+              setStep("confirm");
+            },
+          });
+
+          return;
         }
+
+        payload.paymentMethod =
+          selectedPaymentMethod?.type === "Bank_Transfer"
+            ? "bank_transfer"
+            : selectedPaymentMethod?.type === "Visa_Mastercard"
+              ? "card"
+              : "manual";
+        rec = await createManualPayment(payload);
 
         setSavedPayment(rec);
         if (typeof window !== "undefined")
@@ -290,6 +370,7 @@ export default function PaymentsPage() {
           setProcessing(false);
         }, 800);
       } catch (err) {
+        console.error("Payment error:", err);
         setProcessing(false);
         setTimeout(() => setStep("success"), 800);
       }
@@ -299,7 +380,7 @@ export default function PaymentsPage() {
   const handlePaymentReset = () => {
     setStep("amount");
     setAmount(defaultRent);
-    setPhoneNumber("");
+    setPaystackVerificationState("idle");
     if (paymentMethods.length > 0) {
       setMethod(getPaymentMethodId(paymentMethods[0]));
     } else {
@@ -539,7 +620,7 @@ export default function PaymentsPage() {
       <Tabs defaultValue="history" className="w-full">
         <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="history">Payment History</TabsTrigger>
-          <TabsTrigger disabled={true} value="make-payment">
+          <TabsTrigger disabled={false} value="make-payment">
             Make Payment
           </TabsTrigger>
         </TabsList>
@@ -605,7 +686,7 @@ export default function PaymentsPage() {
                 <span className="hidden sm:inline">Download PDF</span>
               </Button>
               <Button
-                disabled={true}
+                // disabled={false}
                 asChild
                 className="bg-muted hover:bg-muted/90 text-muted-foreground flex-1 sm:flex-none"
               >
@@ -956,7 +1037,7 @@ export default function PaymentsPage() {
             <Card className="border border-border p-4 md:p-8 space-y-6">
               <div>
                 <h2 className="text-xl md:text-2xl font-bold text-foreground mb-4">
-                  Enter Payment Details
+                  Confirm Payment Details
                 </h2>
                 <div className="space-y-4">
                   <div className="rounded-lg border border-border bg-secondary p-4">
@@ -965,23 +1046,6 @@ export default function PaymentsPage() {
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {getPaymentMethodDescription(selectedPaymentMethod)}
-                    </p>
-                  </div>
-                  <div className="p-4 border border-border rounded-lg bg-background">
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      {getPaymentMethodLabel(selectedPaymentMethod)} Phone
-                      Number
-                    </label>
-                    <input
-                      type="tel"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="254712345678"
-                      className="w-full rounded-lg border border-border px-4 py-3 bg-background text-foreground"
-                    />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Enter the phone number that will receive the mobile money
-                      request.
                     </p>
                   </div>
                 </div>
@@ -1016,14 +1080,6 @@ export default function PaymentsPage() {
                           {getPaymentMethodLabel(selectedPaymentMethod)}
                         </span>
                       </div>
-                      {requiresPhoneNumber && phoneNumber && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Phone</span>
-                          <span className="font-semibold text-foreground">
-                            {phoneNumber}
-                          </span>
-                        </div>
-                      )}
                       <div className="border-t border-border pt-3 flex justify-between text-sm">
                         <span className="text-muted-foreground">Total</span>
                         <span className="font-bold text-foreground text-base md:text-lg">
@@ -1059,13 +1115,15 @@ export default function PaymentsPage() {
 
                 <div>
                   <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-2">
-                    {requiresPhoneNumber
-                      ? `${getPaymentMethodLabel(selectedPaymentMethod)} Payment Initiated`
-                      : "Payment Successful!"}
+                    {selectedPaymentMethod?.type === "Paystack"
+                      ? "Payment Processing"
+                      : requiresPhoneNumber
+                        ? `${getPaymentMethodLabel(selectedPaymentMethod)} Payment Initiated`
+                        : "Payment Successful!"}
                   </h2>
                   <p className="text-muted-foreground text-sm md:text-base">
-                    {requiresPhoneNumber
-                      ? `A ${getPaymentMethodLabel(selectedPaymentMethod)} payment request for ${formatCurrency(amount, activeCurrency)} has been sent to ${phoneNumber}. Please confirm the transaction on your phone.`
+                    {selectedPaymentMethod?.type === "Paystack"
+                      ? "The Paystack popup is open. Complete the checkout inside the popup to finish your payment securely."
                       : `Your payment of ${formatCurrency(amount, activeCurrency)} has been processed successfully.`}
                   </p>
                 </div>
@@ -1142,7 +1200,6 @@ export default function PaymentsPage() {
                 disabled={
                   (step === "amount" && amount <= 0) ||
                   (step === "method" && !selectedPaymentMethod) ||
-                  (step === "details" && requiresPhoneNumber && !phoneNumber) ||
                   (step === "confirm" && processing)
                 }
                 className="bg-primary hover:bg-primary/90 text-white flex-1"

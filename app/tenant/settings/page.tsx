@@ -99,10 +99,10 @@ function getAdminPaymentMethodDisplayName(type: string) {
       return "MTN Mobile Money";
     case "Airtel_Money":
       return "Airtel Money";
-    case "M-Pesa":
-      return "M-Pesa";
     case "Orange_Money":
       return "Orange Money";
+    case "Paystack":
+      return "Paystack";
     default:
       return type.replace(/[_-]/g, " ");
   }
